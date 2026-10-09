@@ -26,15 +26,63 @@ When the switch turns on, OnionFruitux opens [https://check.torproject.org/](htt
 
 ## Install
 
-Debian, Ubuntu, Linux Mint, Pop!_OS, Fedora, Arch, Manjaro, and openSUSE:
+Download one file, or run one command. The package manager then downloads Tor, nftables, Qt, polkit, and the bridge transports that distro ships.
 
 ```bash
-git clone https://github.com/nitrofireinc-pixel/OnionFruitux.git
-cd OnionFruitux
-sudo ./install.sh
+curl -fsSL https://raw.githubusercontent.com/nitrofireinc-pixel/OnionFruitux/main/get.sh | sudo bash
 ```
 
-The installer uses apt, dnf, pacman, or zypper. It installs Tor, nftables, a bridge transport when the distro has one (lyrebird, obfs4proxy, or snowflake-client), and the Qt libraries used by the window. It also creates a system user named `onionfruitux` that Tor runs as.
+That detects Debian, Ubuntu, Linux Mint, Pop!_OS, Fedora, openSUSE, or Arch, downloads the package from the [latest GitHub release](https://github.com/nitrofireinc-pixel/OnionFruitux/releases/latest), and installs it with apt, dnf, zypper, or pacman.
+
+### Debian, Ubuntu, Linux Mint, Pop!_OS
+
+Download `onionfruitux_*_all.deb` from the latest release, then:
+
+```bash
+sudo apt install ./onionfruitux_*_all.deb
+```
+
+The package is `Architecture: all`. apt installs `tor`, `nftables`, `python3-pyqt6`, `pkexec`, `polkitd` (or `policykit-1`), `xdg-utils`, `obfs4proxy`, and `snowflake-client`.
+
+### Fedora
+
+Download `onionfruitux-*.noarch.rpm` from the latest release, then:
+
+```bash
+sudo dnf install ./onionfruitux-*.noarch.rpm
+```
+
+dnf installs `tor`, `nftables`, `python3`, `python3-pyqt6`, `polkit` (which provides `pkexec`), `xdg-utils`, and `obfs4` (which provides `obfs4proxy`). Fedora's repositories do not ship `snowflake-client`.
+
+### openSUSE
+
+The same RPM:
+
+```bash
+sudo zypper install ./onionfruitux-*.noarch.rpm
+```
+
+zypper installs `tor`, `nftables`, Python 3, PyQt6, `polkit`, `pkexec`, `xdg-utils`, and `obfs4`. openSUSE's `snowflake` package is a proxy, not `snowflake-client`.
+
+### Arch and Manjaro
+
+Download `onionfruitux-*-any.pkg.tar.zst`, then install the dependencies and the package. `pacman -U` does not download dependencies on its own. The one-line installer above does both.
+
+```bash
+sudo pacman -Sy --needed python tor nftables python-pyqt6 polkit xdg-utils
+sudo pacman -U ./onionfruitux-*-any.pkg.tar.zst
+```
+
+From a git clone you can build it instead:
+
+```bash
+cd packaging
+makepkg -si
+```
+
+The package is `arch=('any')`. The official Arch repositories do not currently ship `obfs4proxy` or `snowflake-client`. Plain Tor routes still work; install those transports yourself when you need those bridges.
+
+The packages install the command, the manual page, the desktop file, the icon, the polkit policy, and a systemd unit. The unit is not enabled. `onionfruitux boot enable` turns routing on at the next boot and does not connect now.
 
 Then pin **OnionFruitux** to the dock or panel from the app menu, or run:
 
@@ -80,13 +128,53 @@ Country selection uses Tor's GeoIP database (`/usr/share/tor/geoip` on most dist
 
 ## Uninstall
 
+Debian, Ubuntu, Linux Mint, and Pop!_OS:
+
 ```bash
-sudo ./uninstall.sh
+sudo apt remove onionfruitux
+sudo apt purge onionfruitux
 ```
 
-That removes the app, the firewall table, and OnionFruitux's Tor process. The `tor` and `nftables` packages stay installed. `sudo ./uninstall.sh --purge` also removes the `onionfruitux` user and `/var/lib/onionfruitux`.
+`apt purge` also removes the `onionfruitux` user and `/var/lib/onionfruitux`.
+
+Fedora:
+
+```bash
+sudo dnf remove onionfruitux
+```
+
+openSUSE:
+
+```bash
+sudo zypper remove onionfruitux
+```
+
+Arch and Manjaro:
+
+```bash
+sudo pacman -R onionfruitux
+```
+
+On Fedora, openSUSE, and Arch, remove the system user and data yourself when you want a full purge:
+
+```bash
+sudo userdel onionfruitux
+sudo rm -rf /var/lib/onionfruitux /etc/onionfruitux
+```
+
+The `tor` and `nftables` packages stay installed. From a git checkout, `sudo ./uninstall.sh` still removes a copy installed from source. `sudo ./uninstall.sh --purge` also removes the user and `/var/lib/onionfruitux`.
 
 ## Development
+
+Install from a git clone with the distro package manager:
+
+```bash
+git clone https://github.com/nitrofireinc-pixel/OnionFruitux.git
+cd OnionFruitux
+sudo ./install.sh
+```
+
+`install.sh` uses apt, dnf, pacman, or zypper. It installs Tor, nftables, a bridge transport when the distro has one, and the Qt libraries used by the window.
 
 ```bash
 python3 -m unittest discover -s tests -v
