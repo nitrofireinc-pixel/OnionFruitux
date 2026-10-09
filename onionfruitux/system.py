@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import pwd
+import shutil
 import signal
 import socket
 import subprocess
@@ -37,6 +38,16 @@ from onionfruitux.paths import (
 )
 from onionfruitux.torrc import render_torrc
 
+# The firewall is installed only after Tor reports Bootstrapped 100%.
+# These limits are what make a hung Tor or nftables command fail cleanly.
+PORT_TIMEOUT = 25
+BOOTSTRAP_TIMEOUT = 90
+NFT_TIMEOUT = 15
+HEARTBEAT_GRACE = 8
+
+_helper_pid: int | None = None
+
+
 UNIT_TEXT = """[Unit]
 Description=OnionFruitux whole-computer Tor routing
 Documentation=man:onionfruitux(1)
@@ -54,45 +65,53 @@ WantedBy=multi-user.target
 """
 
 
-def connect(cfg: Config) -> None:
-    """Start OnionFruitux's Tor, then install the onionfruitux firewall table."""
+def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> None:
+    """Start Tor, wait until it is fully connected, then install the firewall.
+
+    The nftables table is not installed until Tor's log says Bootstrapped 100%.
+    A timeout, a dead Tor, or the desktop process disappearing removes the
+    table and stops only OnionFruitux's Tor.
+    """
     if os.geteuid() != 0:
         raise OnionError("connecting needs an administrator password")
+    _arm_parent_death()
+
+    def report(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
+    def abort() -> None:
+        _check_heartbeat(heartbeat_file)
+
     _prepare_runtime()
-    torrc = render_torrc(cfg)
     rules = render_firewall(cfg.network)
     _assert_only_our_table(rules)
-    TORRC_PATH.write_text(torrc, encoding="utf-8")
-    os.chmod(TORRC_PATH, 0o640)
-    try:
-        user = pwd.getpwnam(TOR_USER)
-    except KeyError as exc:
-        raise OnionError("system user onionfruitux does not exist") from exc
-    os.chown(TORRC_PATH, 0, user.pw_gid)
+    _install_torrc(cfg)
     # Replace a previous OnionFruitux Tor before the new one binds the ports.
-    # The table is installed only after the new process is listening, so a
-    # failed start does not leave the computer with nowhere to send traffic.
     stop_tor()
+    _reset_log()
+    report("Starting Tor…")
     try:
-        proc = subprocess.Popen(
-            ["tor", "-f", str(TORRC_PATH)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except FileNotFoundError as exc:
-        raise OnionError("tor is not installed") from exc
-    PID_PATH.write_text(f"{proc.pid}\n", encoding="utf-8")
-    try:
-        if not _wait_port(TRANS_PORT, 30):
-            raise OnionError("Tor did not open its transparent proxy port")
+        proc = _spawn_tor()
+        report("Waiting for Tor to open its proxy…")
+        if not _wait_port(TRANS_PORT, PORT_TIMEOUT, abort=abort):
+            raise OnionError(
+                "Tor did not open its transparent proxy port. The firewall was not changed."
+            )
+        report("Waiting for Tor to finish connecting…")
+        percent = _wait_bootstrap(BOOTSTRAP_TIMEOUT, progress=progress, abort=abort)
+        if percent != 100:
+            raise OnionError(
+                "Tor did not finish connecting before the time limit. "
+                "The firewall was not changed."
+            )
+        abort()
+        report("Applying the firewall…")
         apply_ruleset(rules)
         _write_state(True, proc.pid, cfg.current_route().name)
-        _wait_bootstrap(20)
+        report("Connected.")
     except Exception:
-        delete_table()
-        stop_tor()
-        _write_state(False, None, "")
+        _rollback_network()
         raise
 
 
@@ -103,6 +122,20 @@ def disconnect() -> None:
     delete_table()
     stop_tor()
     _write_state(False, None, "")
+
+
+def panic_off() -> None:
+    """Remove OnionFruitux's firewall and Tor even when state says the switch is off.
+
+    Safe to run twice. Does not open a browser. DNS redirects live only in the
+    onionfruitux table, so deleting that table restores normal name lookup.
+    """
+    if os.geteuid() != 0:
+        raise OnionError("clearing the firewall needs an administrator password")
+    delete_table()
+    stop_tor()
+    _write_state(False, None, "")
+    _flush_dns_cache()
 
 
 def new_circuit() -> None:
@@ -116,47 +149,52 @@ def new_circuit() -> None:
 
 def apply_ruleset(rules: str) -> None:
     """Replace the onionfruitux table with rules OnionFruitux generated."""
+    global _helper_pid
     _assert_only_our_table(rules)
     delete_table()
-    result = subprocess.run(
-        ["nft", "-f", "-"],
-        input=rules,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "nft failed").strip()
+    try:
+        proc = subprocess.Popen(
+            ["nft", "-f", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise OnionError("nftables is not installed") from exc
+    _helper_pid = proc.pid
+    try:
+        try:
+            stdout, stderr = proc.communicate(rules, timeout=NFT_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.communicate()
+            raise OnionError(
+                "nftables did not finish; the firewall was not left in place"
+            ) from exc
+    finally:
+        _helper_pid = None
+    if proc.returncode != 0:
+        detail = (stderr or stdout or "nft failed").strip()
         raise OnionError(detail)
 
 
 def delete_table() -> None:
-    subprocess.run(
-        ["nft", "delete", "table", "inet", TABLE_NAME],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        subprocess.run(
+            ["nft", "delete", "table", "inet", TABLE_NAME],
+            capture_output=True,
+            text=True,
+            timeout=NFT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
 
 
 def stop_tor() -> None:
-    pid = _read_pid()
-    if pid and _is_our_tor(pid):
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pid = None
-        if pid:
-            for _ in range(50):
-                if not _alive(pid):
-                    break
-                time.sleep(0.1)
-            else:
-                if _is_our_tor(pid):
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+    for pid in _our_tor_pids():
+        _stop_pid(pid)
     if PID_PATH.exists():
         try:
             PID_PATH.unlink()
@@ -226,6 +264,121 @@ def _unit_destination() -> Path:
     if UNIT_PATH_FALLBACK.parent.is_dir():
         return UNIT_PATH_FALLBACK
     return Path("/etc/systemd/system/onionfruitux.service")
+
+
+def _install_torrc(cfg: Config) -> None:
+    torrc = render_torrc(cfg)
+    TORRC_PATH.write_text(torrc, encoding="utf-8")
+    os.chmod(TORRC_PATH, 0o640)
+    try:
+        user = pwd.getpwnam(TOR_USER)
+    except KeyError as exc:
+        raise OnionError("system user onionfruitux does not exist") from exc
+    os.chown(TORRC_PATH, 0, user.pw_gid)
+
+
+def _spawn_tor() -> subprocess.Popen:
+    try:
+        proc = subprocess.Popen(
+            ["tor", "-f", str(TORRC_PATH)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        raise OnionError("tor is not installed") from exc
+    PID_PATH.write_text(f"{proc.pid}\n", encoding="utf-8")
+    return proc
+
+
+def _reset_log() -> None:
+    """Drop a previous bootstrap line so a new Tor has to reach 100% itself."""
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_PATH.write_text("", encoding="utf-8")
+    try:
+        user = pwd.getpwnam(TOR_USER)
+    except KeyError:
+        user = None
+    if user is not None:
+        os.chown(LOG_PATH, user.pw_uid, user.pw_gid)
+    os.chmod(LOG_PATH, 0o640)
+
+
+def _rollback_network() -> None:
+    _stop_helper()
+    delete_table()
+    stop_tor()
+    _write_state(False, None, "")
+
+
+def _stop_helper() -> None:
+    pid = _helper_pid
+    if not pid:
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return
+
+
+def _arm_parent_death() -> None:
+    """If pkexec's parent disappears, roll the firewall back and exit.
+
+    The desktop process is not this process's parent. A supervisor between
+    them sets the same parent-death signal on pkexec, so closing or killing
+    the window during connect reaches this handler.
+    """
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        # 1 is PR_SET_PDEATHSIG.
+        if libc.prctl(1, int(signal.SIGTERM), 0, 0, 0) != 0:
+            return
+    except (OSError, AttributeError):
+        return
+    signal.signal(signal.SIGTERM, _rollback_signal)
+    signal.signal(signal.SIGHUP, _rollback_signal)
+    # Do not exit when the parent is pid 1. `onionfruitux --system connect`
+    # is started by systemd, and systemd is pid 1. A dead pkexec still
+    # delivers the parent-death signal armed above; the desktop heartbeat
+    # covers the moment before that signal is armed.
+
+
+def _rollback_signal(signum, _frame) -> None:
+    try:
+        _rollback_network()
+        time.sleep(0.2)
+        delete_table()
+    finally:
+        os._exit(1)
+
+
+def _check_heartbeat(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        stamp = float(Path(path).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    if time.time() - stamp > HEARTBEAT_GRACE:
+        raise OnionError("Connecting was cancelled because OnionFruitux closed")
+
+
+def _flush_dns_cache() -> None:
+    if not shutil.which("resolvectl"):
+        return
+    try:
+        subprocess.run(
+            ["resolvectl", "flush-caches"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
 
 
 def _prepare_runtime() -> None:
@@ -301,9 +454,49 @@ def _cmdline(pid: int) -> str:
     return raw.replace(b"\x00", b" ").decode(errors="replace")
 
 
-def _wait_port(port: int, timeout: float) -> bool:
+def _our_tor_pids() -> list[int]:
+    found: list[int] = []
+    pid = _read_pid()
+    if pid:
+        found.append(pid)
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        candidate = int(entry.name)
+        if candidate in found:
+            continue
+        if _is_our_tor(candidate):
+            found.append(candidate)
+    return found
+
+
+def _stop_pid(pid: int) -> None:
+    if not _is_our_tor(pid):
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(50):
+        if not _alive(pid):
+            return
+        time.sleep(0.1)
+    if _is_our_tor(pid):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+
+
+def _wait_port(port: int, timeout: float, abort=None) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if abort is not None:
+            abort()
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.4):
                 return True
@@ -312,16 +505,35 @@ def _wait_port(port: int, timeout: float) -> bool:
     return False
 
 
-def _wait_bootstrap(timeout: float) -> None:
+def _bootstrap_percent() -> int | None:
+    import re
+
+    try:
+        text = LOG_PATH.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    found = re.findall(r"Bootstrapped (\d+)%", text)
+    if not found:
+        return None
+    return int(found[-1])
+
+
+def _wait_bootstrap(timeout: float, progress=None, abort=None) -> int:
     deadline = time.time() + timeout
+    last = -1
     while time.time() < deadline:
-        try:
-            text = LOG_PATH.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = ""
-        if "Bootstrapped 100%" in text:
-            return
+        if abort is not None:
+            abort()
+        percent = _bootstrap_percent()
+        if percent is not None and percent != last:
+            last = percent
+            if progress is not None:
+                progress(f"Tor bootstrap {percent}%…")
+        if percent == 100:
+            return 100
         time.sleep(0.4)
+    percent = _bootstrap_percent()
+    return percent if percent is not None else 0
 
 
 def _signal_newnym() -> None:

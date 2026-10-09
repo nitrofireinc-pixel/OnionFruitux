@@ -1,0 +1,20 @@
+post_install() {
+  if [ -x /usr/share/onionfruitux/setup-account.sh ]; then
+    /usr/share/onionfruitux/setup-account.sh
+  fi
+}
+
+pre_remove() {
+  if [ -x /usr/share/onionfruitux/stop.sh ]; then
+    /usr/share/onionfruitux/stop.sh || true
+  fi
+}
+
+post_remove() {
+  if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  if command -v mandb >/dev/null 2>&1; then
+    mandb -q >/dev/null 2>&1 || true
+  fi
+}
