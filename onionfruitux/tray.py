@@ -53,9 +53,11 @@ def run_tray() -> int:
         window = MainWindow()
         window.show()
         return app.exec()
-    icon = _load_icon(QtGui) or app.style().standardIcon(
-        QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon
-    )
+    icon = _load_icon(QtGui)
+    if icon is None:
+        icon = app.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
+    else:
+        app.setWindowIcon(icon)
     tray = QtWidgets.QSystemTrayIcon(icon)
     tray.setToolTip("OnionFruitux")
     menu = QtWidgets.QMenu()

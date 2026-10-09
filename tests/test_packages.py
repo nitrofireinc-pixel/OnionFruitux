@@ -9,11 +9,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 class PackageMetadataTests(unittest.TestCase):
     def test_version_matches_app(self):
         init = (ROOT / "onionfruitux" / "__init__.py").read_text(encoding="utf-8")
-        self.assertIn('__version__ = "1.0.2"', init)
+        self.assertIn('__version__ = "1.0.3"', init)
         spec = (ROOT / "packaging" / "onionfruitux.spec").read_text(encoding="utf-8")
         pkgbuild = (ROOT / "packaging" / "PKGBUILD").read_text(encoding="utf-8")
-        self.assertIn("Version: 1.0.2", spec)
-        self.assertIn("pkgver=1.0.2", pkgbuild)
+        self.assertIn("Version: 1.0.3", spec)
+        self.assertIn("pkgver=1.0.3", pkgbuild)
 
     def test_deb_depends_and_arch(self):
         script = (ROOT / "packaging" / "build-deb.sh").read_text(encoding="utf-8")
@@ -55,6 +55,18 @@ class PackageMetadataTests(unittest.TestCase):
         self.assertIn("dnf install -y", getter)
         self.assertIn("zypper --non-interactive install --allow-unsigned-rpm", getter)
         self.assertIn("pacman -U", getter)
+        desktop = (ROOT / "share/onionfruitux.desktop").read_text(encoding="utf-8")
+        self.assertIn("Icon=onionfruitux\n", desktop)
+        for size in (16, 32, 48, 64, 128, 256):
+            icon = ROOT / "share/icons/hicolor" / f"{size}x{size}" / "apps" / "onionfruitux.png"
+            self.assertTrue(icon.is_file(), icon)
+            self.assertTrue(icon.read_bytes().startswith(b"\x89PNG"))
+        stage = (ROOT / "packaging/stage.sh").read_text(encoding="utf-8")
+        deb = (ROOT / "packaging/build-deb.sh").read_text(encoding="utf-8")
+        self.assertIn("for size in 16 32 48 64 128 256", stage)
+        self.assertIn("${size}x${size}/apps/onionfruitux.png", stage)
+        self.assertIn("gtk-update-icon-cache", deb)
+        self.assertIn("update-desktop-database", deb)
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
         self.assertIn("softprops/action-gh-release", workflow)
         self.assertIn('tags:', workflow)

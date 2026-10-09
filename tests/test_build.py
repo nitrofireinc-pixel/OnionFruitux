@@ -75,6 +75,7 @@ class TorrcTests(unittest.TestCase):
     def test_onion_mapping_without_a_route(self):
         text = render_torrc(Config())
         self.assertIn("VirtualAddrNetworkIPv4 10.192.0.0/10", text)
+        self.assertIn("VirtualAddrNetworkIPv6 [FC00:192::]/32", text)
         self.assertNotIn("EntryNodes", text)
         self.assertNotIn("UseBridges", text)
 
@@ -90,6 +91,12 @@ class FirewallTests(unittest.TestCase):
         self.assertIn("udp dport 53 redirect to :9153", text)
         self.assertIn("tcp dport 53 redirect to :9153", text)
         self.assertIn("meta l4proto tcp redirect to :9140", text)
+        self.assertLess(
+            text.index("10.192.0.0/10 meta l4proto tcp redirect"),
+            text.index("192.168.0.0/16"),
+        )
+        self.assertLess(text.index("ct status dnat accept"), text.index("meta l4proto udp reject"))
+        self.assertNotIn("10.0.0.0/8", text)
         self.assertNotIn(":9040", text)
         self.assertNotIn(":5353", text)
         self.assertIn("meta l4proto udp reject", text)

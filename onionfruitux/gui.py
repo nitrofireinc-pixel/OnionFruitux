@@ -548,11 +548,33 @@ def _country_box(widgets, selected: str):
     return box
 
 
+def _icon_files() -> list[Path]:
+    """Installed PNGs first, then the copy in this repo, then the bundled SVG."""
+    files: list[Path] = []
+    roots = (
+        Path("/usr/share/icons/hicolor"),
+        Path(__file__).resolve().parents[1] / "share" / "icons" / "hicolor",
+    )
+    for root in roots:
+        for size in (16, 32, 48, 64, 128, 256):
+            path = root / f"{size}x{size}" / "apps" / "onionfruitux.png"
+            if path.is_file():
+                files.append(path)
+        if files:
+            return files
+    svg = _DATA / "onionfruitux.svg"
+    if svg.is_file():
+        files.append(svg)
+    return files
+
+
 def _load_icon(QtGui):
-    path = _DATA / "onionfruitux.svg"
-    if not path.exists():
+    files = _icon_files()
+    if not files:
         return None
-    icon = QtGui.QIcon(str(path))
+    icon = QtGui.QIcon()
+    for path in files:
+        icon.addFile(str(path))
     if icon.isNull():
         return None
     return icon

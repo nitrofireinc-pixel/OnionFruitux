@@ -1,5 +1,5 @@
 Name: onionfruitux
-Version: 1.0.2
+Version: 1.0.3
 Release: 1
 Summary: Send this computer's internet through Tor
 License: GPL-3.0-or-later
@@ -44,6 +44,12 @@ cp -a %{_sourcedir}/rootfs/. %{buildroot}/
 
 %post
 /usr/share/onionfruitux/setup-account.sh
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
 
 %preun
 if [ "$1" = 0 ] && [ -x /usr/share/onionfruitux/stop.sh ]; then
@@ -56,6 +62,12 @@ if [ "$1" = 0 ]; then
     systemctl daemon-reload >/dev/null 2>&1 || true
   fi
 fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+fi
 
 %files
 %license /usr/share/licenses/onionfruitux/LICENSE
@@ -66,10 +78,20 @@ fi
 /usr/share/man/man1/onionfruitux.1.gz
 /usr/share/applications/onionfruitux.desktop
 /usr/share/icons/hicolor/scalable/apps/onionfruitux.svg
+/usr/share/icons/hicolor/16x16/apps/onionfruitux.png
+/usr/share/icons/hicolor/32x32/apps/onionfruitux.png
+/usr/share/icons/hicolor/48x48/apps/onionfruitux.png
+/usr/share/icons/hicolor/64x64/apps/onionfruitux.png
+/usr/share/icons/hicolor/128x128/apps/onionfruitux.png
+/usr/share/icons/hicolor/256x256/apps/onionfruitux.png
 /usr/share/polkit-1/actions/com.nitrofire.onionfruitux.policy
 /usr/lib/systemd/system/onionfruitux.service
 
 %changelog
+* Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.3-1
+- Accept redirected packets so the computer can actually use Tor.
+- Install the OnionFruitux icon at the sizes desktops look up.
+
 * Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.2-1
 - Bind OnionFruitux's Tor to its own ports so it can run beside Ubuntu's Tor and mDNS.
 - Read Tor's log instead of connecting to TransPort, which crashed Tor 0.4.9.

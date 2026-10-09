@@ -27,6 +27,13 @@ CONTROL_PORT = 9156
 # Ports other programs commonly bind. Doctor mentions them. We do not use them.
 DISTRO_TOR_PORT = 9050
 
+# Tor maps resolved names into these ranges. Both sit inside the private
+# ranges a LAN exemption would otherwise leave alone.
+VIRTUAL_IPV4 = "10.192.0.0/10"
+VIRTUAL_IPV6 = "fc00:192::/32"
+DNS_SAVE_PATH = STATE_DIR / "dns.json"
+RESOLV_BACKUP_PATH = STATE_DIR / "resolv.conf.saved"
+
 TOR_USER = "onionfruitux"
 TABLE_NAME = "onionfruitux"
 CHECK_URL = "https://check.torproject.org/"

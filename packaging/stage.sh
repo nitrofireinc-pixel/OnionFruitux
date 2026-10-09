@@ -23,6 +23,12 @@ mkdir -p \
   "$DEST/usr/share/man/man1" \
   "$DEST/usr/share/applications" \
   "$DEST/usr/share/icons/hicolor/scalable/apps" \
+  "$DEST/usr/share/icons/hicolor/16x16/apps" \
+  "$DEST/usr/share/icons/hicolor/32x32/apps" \
+  "$DEST/usr/share/icons/hicolor/48x48/apps" \
+  "$DEST/usr/share/icons/hicolor/64x64/apps" \
+  "$DEST/usr/share/icons/hicolor/128x128/apps" \
+  "$DEST/usr/share/icons/hicolor/256x256/apps" \
   "$DEST/usr/share/polkit-1/actions" \
   "$DEST/usr/lib/systemd/system" \
   "$DEST/usr/share/doc/onionfruitux" \
@@ -44,6 +50,10 @@ chmod 644 "$DEST/usr/share/man/man1/onionfruitux.1.gz"
 
 install -m 644 "$ROOT/share/onionfruitux.desktop" "$DEST/usr/share/applications/onionfruitux.desktop"
 install -m 644 "$ROOT/share/onionfruitux.svg" "$DEST/usr/share/icons/hicolor/scalable/apps/onionfruitux.svg"
+for size in 16 32 48 64 128 256; do
+  install -m 644 "$ROOT/share/icons/hicolor/${size}x${size}/apps/onionfruitux.png" \
+    "$DEST/usr/share/icons/hicolor/${size}x${size}/apps/onionfruitux.png"
+done
 install -m 644 "$ROOT/share/com.nitrofire.onionfruitux.policy" \
   "$DEST/usr/share/polkit-1/actions/com.nitrofire.onionfruitux.policy"
 install -m 644 "$ROOT/share/onionfruitux.service" "$DEST/usr/lib/systemd/system/onionfruitux.service"

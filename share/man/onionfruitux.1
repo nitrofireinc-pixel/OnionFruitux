@@ -1,4 +1,4 @@
-.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0.2" "User Commands"
+.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0.3" "User Commands"
 .SH NAME
 onionfruitux \- send this computer's internet through Tor
 .SH SYNOPSIS
@@ -56,6 +56,30 @@ lookups that would have gone to a home router, and
 names can resolve through Tor's DNS port. DHCP keeps working. Other UDP is
 blocked. The local network stays direct unless that setting is turned off.
 Traffic that cannot go through Tor is rejected unless that check is turned off.
+.PP
+A redirected packet is still on its original network interface when the filter
+hook runs, so the loopback accept does not match it. The filter accepts
+packets with the DNAT conntrack status, which is how the redirect is marked,
+and those packets are delivered to Tor. Tor's mapped addresses,
+10.192.0.0/10 and fc00:192::/32, are redirected as well. They are not treated
+as the local network.
+.PP
+On Ubuntu, programs ask systemd\-resolved at 127.0.0.53. While the switch is
+on, OnionFruitux tells resolved to forward to 127.0.0.1 port 9153 and does not
+replace the stub\-resolv.conf symlink. Turning the switch off, or running
+.BR panic\-off ,
+puts the previous resolver back. A machine without systemd\-resolved gets a
+temporary
+.I nameserver 127.0.0.1
+line, and the original file is restored afterward. Port 53 is still redirected,
+so a lookup aimed at the home router enters Tor either way.
+.PP
+Tailscale's encrypted UDP does not pass the UDP block, so the Tailscale tunnel
+pauses while the switch is on and returns when the switch is turned off.
+MagicDNS is not used during that time. Web and other TCP still enter Tor,
+including TCP that would have gone out through Tailscale, so that path is not
+a way around Tor. Printers and other machines on the local network stay
+reachable, except for DNS.
 .PP
 Turning the switch off deletes only the
 .B onionfruitux
@@ -158,8 +182,8 @@ Remove the
 .B onionfruitux
 firewall table and stop OnionFruitux's Tor immediately, even if the window
 froze or the saved state says the switch is already off. This does not open a
-browser. It is safe to run twice. DNS redirects live only in that table, so
-removing it restores normal name lookup.
+browser. It is safe to run twice. It removes the firewall table, points DNS
+back at the previous resolver, and stops OnionFruitux's Tor.
 .TP
 .B status
 Print whether the switch is on, and the active route.

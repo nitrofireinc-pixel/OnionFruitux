@@ -18,7 +18,13 @@ While the switch is on, OnionFruitux runs Tor as its own system user and adds on
 - Other UDP is blocked, so a program cannot bypass Tor with a UDP stream.
 - The local network stays direct (printers, file shares, other machines on the LAN). There is a setting to send that through Tor as well.
 - Traffic that cannot go through Tor is rejected. That check is on by default.
-- Turning the switch off deletes only the `onionfruitux` table and stops the Tor process OnionFruitux started.
+- Turning the switch off deletes only the `onionfruitux` table, restores the previous DNS settings, and stops the Tor process OnionFruitux started.
+
+Redirected connections are accepted in the firewall. The filter runs before Linux moves a redirected packet onto the loopback interface, so a loopback allow rule does not see them. Accepting the DNAT mark is what lets them reach Tor. Without that, Tor can be fully connected while Firefox and curl still have no working web, and `panic-off` is what brings the network back.
+
+On Ubuntu, apps ask systemd-resolved at `127.0.0.53`. While the switch is on, OnionFruitux points resolved at `127.0.0.1:9153` and leaves the `stub-resolv.conf` symlink alone. Disconnect and `panic-off` restore the previous resolver. Port 53 is redirected as well, including lookups that would have gone to the home router.
+
+Tailscale's WireGuard UDP is blocked while the switch is on, so the tunnel pauses and MagicDNS is not used. It comes back when the switch is turned off. TCP that would have left through Tailscale goes through Tor instead, which keeps that path from being a way around Tor. Local printers and file shares stay reachable. DNS does not.
 
 The window also has **New circuit**, which asks Tor for a fresh path. Routes remember an entry country, an exit country, and a bridge choice.
 
@@ -47,10 +53,10 @@ The package is `Architecture: all`. apt installs `tor`, `nftables`, `python3-pyq
 Upgrading replaces the installed package. You do not need to remove it first:
 
 ```bash
-sudo apt install ./onionfruitux_1.0.2-1_all.deb
+sudo apt install ./onionfruitux_1.0.3-1_all.deb
 ```
 
-If the switch is on, turn it off and on once after upgrading so Tor uses the new ports.
+If the switch is on, turn it off and on once after upgrading.
 
 Ubuntu's `tor` package starts its own Tor on port 9050 (`tor.service` and `tor@default.service`). OnionFruitux does not use that port, or 9051, or mDNS port 5353. It listens on 9140 (transparent proxy), 9153 (DNS), 9155 (SOCKS), and 9156 (control), and it does not stop the system Tor. `onionfruitux doctor` warns when that service is running. Stop it yourself only when you do not want it:
 

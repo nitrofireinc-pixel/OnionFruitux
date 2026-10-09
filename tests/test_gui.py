@@ -181,3 +181,16 @@ class GuiTests(unittest.TestCase):
         self.assertGreater(samples["on"].green(), samples["on"].red())
         self.assertEqual(PHASE_COLOR["on"], "#3dba7a")
         self.assertEqual(PHASE_COLOR["connecting"], "#e08a1e")
+
+    def test_tray_tints_the_installed_artwork(self):
+        from onionfruitux.tray import icon_for_phase
+
+        QtCore, QtGui, _QtWidgets = load_qt()
+        base = QtGui.QIcon("share/icons/hicolor/64x64/apps/onionfruitux.png")
+        self.assertFalse(base.isNull())
+        colors = {}
+        for phase in ("off", "connecting", "on"):
+            icon = icon_for_phase(base, phase, QtGui, QtCore)
+            colors[phase] = icon.pixmap(64, 64).toImage().pixelColor(32, 32)
+        self.assertGreater(colors["connecting"].red(), colors["off"].red())
+        self.assertGreater(colors["on"].green(), colors["connecting"].green())

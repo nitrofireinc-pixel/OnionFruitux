@@ -49,10 +49,11 @@ class ConnectOrderTests(unittest.TestCase):
              patch.object(system, "_wait_for_listeners", return_value=True), \
              patch.object(system, "_wait_bootstrap", side_effect=bootstrap), \
              patch.object(system, "apply_ruleset", side_effect=apply), \
+             patch.object(system, "engage_dns", side_effect=lambda: order.append("dns")), \
              patch.object(system, "_write_state") as state:
             messages = []
             system.connect(Config(), progress=messages.append)
-        self.assertEqual(order, ["bootstrap", "firewall"])
+        self.assertEqual(order, ["bootstrap", "firewall", "dns"])
         self.assertIn("Tor bootstrap 100%…", messages)
         self.assertIn("Applying the firewall…", messages)
         self.assertEqual(messages[-1], "Connected.")

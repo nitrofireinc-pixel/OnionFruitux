@@ -20,6 +20,7 @@ from pathlib import Path
 from onionfruitux.config import Config
 from onionfruitux.errors import OnionError
 from onionfruitux.firewall import render_firewall
+from onionfruitux.dns import engage_dns, restore_dns
 from onionfruitux.listeners import our_port_conflicts
 from onionfruitux.paths import (
     BOOT_PATH,
@@ -121,6 +122,8 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
         abort()
         report("Applying the firewall…")
         apply_ruleset(rules)
+        report("Sending name lookup through Tor…")
+        engage_dns()
         _write_state(True, proc.pid, cfg.current_route().name)
         report("Connected.")
     except Exception:
@@ -129,23 +132,26 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
 
 
 def disconnect() -> None:
-    """Delete the onionfruitux table, then stop only our Tor process."""
+    """Delete the onionfruitux table, restore DNS, then stop only our Tor process."""
     if os.geteuid() != 0:
         raise OnionError("disconnecting needs an administrator password")
     delete_table()
+    restore_dns()
     stop_tor()
     _write_state(False, None, "")
+    _flush_dns_cache()
 
 
 def panic_off() -> None:
     """Remove OnionFruitux's firewall and Tor even when state says the switch is off.
 
-    Safe to run twice. Does not open a browser. DNS redirects live only in the
-    onionfruitux table, so deleting that table restores normal name lookup.
+    Safe to run twice. Does not open a browser. The onionfruitux table is
+    removed and systemd-resolved, if it was pointed at Tor, is restored.
     """
     if os.geteuid() != 0:
         raise OnionError("clearing the firewall needs an administrator password")
     delete_table()
+    restore_dns()
     stop_tor()
     _write_state(False, None, "")
     _flush_dns_cache()
@@ -331,6 +337,7 @@ def _truncate_log(path: Path, mode: int, own_by_tor: bool) -> None:
 def _rollback_network() -> None:
     _stop_helper()
     delete_table()
+    restore_dns()
     stop_tor()
     _write_state(False, None, "")
 
