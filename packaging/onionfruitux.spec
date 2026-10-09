@@ -1,5 +1,5 @@
 Name: onionfruitux
-Version: 1.0.0
+Version: 1.0.1
 Release: 1
 Summary: Send this computer's internet through Tor
 License: GPL-3.0-or-later
@@ -70,5 +70,9 @@ fi
 /usr/lib/systemd/system/onionfruitux.service
 
 %changelog
+* Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.1-1
+- Keep the window responsive while connecting, and roll the firewall back on failure.
+- Add onionfruitux panic-off.
+
 * Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.0-1
 - Package the OnionFruitux window, tray, and command line.

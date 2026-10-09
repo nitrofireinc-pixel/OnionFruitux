@@ -91,7 +91,9 @@ onionfruitux          # window
 onionfruitux tray     # panel or dock icon, with the same switch
 ```
 
-The first time the switch is turned on, the desktop asks for an admin password. That password lets OnionFruitux change the firewall. It is remembered for a little while.
+The first time the switch is turned on, the desktop asks for an admin password. That password lets OnionFruitux change the firewall. It is remembered for a little while. The window stays usable while that dialog is open and while Tor is connecting.
+
+The switch slides on and turns **orange** while Tor is starting. A status line shows the step, including the bootstrap percent. It turns **green** only after Tor is fully connected and the firewall is in place. The tray icon uses the same colors. If connecting fails or times out, the switch slides back to off and the firewall is removed. Once the switch is green, OnionFruitux opens https://check.torproject.org in your normal browser, as you, without waiting on the browser. Turn that off under Settings, Network.
 
 ## Routes and bridges
 
@@ -112,11 +114,38 @@ onionfruitux connect
 onionfruitux status
 onionfruitux new-circuit
 onionfruitux disconnect
+onionfruitux panic-off     # remove the firewall table even if the app froze
 onionfruitux doctor
 onionfruitux plan          # print the torrc and firewall rules, change nothing
 ```
 
 `onionfruitux boot enable` saves the current settings and turns routing on at startup. `onionfruitux boot disable` turns that off.
+
+## If the app froze or the network stopped working
+
+The firewall changes live only in one nftables table, `inet onionfruitux`. Deleting that table restores DNS and normal routing. These commands work on the 1.0.0 package already installed, before you upgrade:
+
+```bash
+sudo nft list table inet onionfruitux
+sudo nft list tables
+sudo nft delete table inet onionfruitux
+sudo /usr/bin/onionfruitux --system disconnect
+```
+
+`sudo nft delete table inet onionfruitux` is the command that brings the network back. If it says the table does not exist, the firewall is already gone. `--system disconnect` stops the Tor process this app started and does not open a browser. If that command cannot run, stop only a Tor that is using OnionFruitux's torrc (leave any other Tor alone):
+
+```bash
+ps -eo pid,args | grep /var/lib/onionfruitux/torrc
+sudo kill PID
+```
+
+After upgrading to 1.0.1, one command does both and does not open a browser:
+
+```bash
+onionfruitux panic-off
+```
+
+It is safe to run twice. Closing the app while the switch is still orange also removes the table.
 
 ## Check the machine
 
