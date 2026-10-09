@@ -1,4 +1,4 @@
-.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0" "User Commands"
+.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0.2" "User Commands"
 .SH NAME
 onionfruitux \- send this computer's internet through Tor
 .SH SYNOPSIS
@@ -30,6 +30,8 @@ onionfruitux \- send this computer's internet through Tor
 .br
 .B onionfruitux disconnect
 .br
+.B onionfruitux panic\-off
+.br
 .B onionfruitux doctor
 .br
 .B onionfruitux plan
@@ -59,19 +61,45 @@ Turning the switch off deletes only the
 .B onionfruitux
 table and stops the Tor process OnionFruitux started.
 .PP
-When the switch turns on or off from the window, the tray, or
-.B connect
-and
-.BR disconnect ,
-OnionFruitux opens
+The window stays responsive while the switch is turning on. The switch slides
+on and turns orange, and a status line reports each step, including Tor's
+bootstrap percent. It turns green only when Tor is fully connected and the
+firewall table is installed. The same orange and green states are used on the
+tray icon. If connecting fails or takes too long, the switch returns to off,
+the table is removed, and Tor is stopped. Closing or force\-quitting the app
+during connect does the same rollback.
+.PP
+The firewall is installed only after Tor's log reports Bootstrapped 100%.
+Until then the computer keeps its normal network.
+.PP
+OnionFruitux runs its own Tor. The transparent proxy is port 9140, DNS is
+port 9153, SOCKS is port 9155, and the control port is 9156. Those ports
+are not 9050 or 9051, which the
+.B tor
+package uses, and not 5353, which mDNS uses. Installing this package does
+not stop or disable Ubuntu's Tor service. If that service is running,
+.B onionfruitux doctor
+says so and leaves it running. To stop it yourself:
+.EX
+sudo systemctl disable \-\-now tor.service tor@default.service
+.EE
+If one of OnionFruitux's ports is already taken, the switch names the
+process that holds it. If Tor itself exits, the error includes the last
+lines of its log.
+.PP
+After the switch turns fully on, OnionFruitux opens
 .I https://check.torproject.org/
-after the firewall change. Turn this off under Settings, Network, with
+in the desktop user's browser. The page opens only after that successful
+connection. It is not opened by the root process that changes the firewall,
+and the program does not wait for the browser. Turning the switch off opens
+the page again after the table is removed. Turn this off under Settings,
+Network, with
 .B "Open the Tor check page when the switch changes" .
 The boot service does not open a browser.
 .PP
 The first time the switch is turned on, the desktop asks for an administrator
 password so OnionFruitux can change the firewall. Polkit remembers that
-password for a little while.
+password for a little while. The window is not frozen while that dialog is open.
 .PP
 OnionFruitux is an independent project by Nitrofire Computing. It is not
 affiliated with or endorsed by The Tor Project or DragonFruit Network.
@@ -119,10 +147,19 @@ turn it off and on to use the new route.
 Delete a saved route.
 .TP
 .B connect
-Turn the switch on. This starts Tor and installs the firewall table.
+Turn the switch on. This starts Tor, waits until Tor is fully connected, then
+installs the firewall table. On failure the table is removed.
 .TP
 .B disconnect
 Turn the switch off.
+.TP
+.B panic\-off
+Remove the
+.B onionfruitux
+firewall table and stop OnionFruitux's Tor immediately, even if the window
+froze or the saved state says the switch is already off. This does not open a
+browser. It is safe to run twice. DNS redirects live only in that table, so
+removing it restores normal name lookup.
 .TP
 .B status
 Print whether the switch is on, and the active route.
@@ -224,6 +261,30 @@ also removes the
 .B onionfruitux
 user and
 .IR /var/lib/onionfruitux .
+.SH RECOVERY
+If the computer has no working internet after the app was closed, check for
+the firewall table and remove it. These commands work even on 1.0.0, which
+does not have
+.BR panic\-off :
+.EX
+sudo nft list table inet onionfruitux
+sudo nft delete table inet onionfruitux
+sudo /usr/bin/onionfruitux \-\-system disconnect
+.EE
+.B nft delete
+is enough to restore DNS and normal routing.
+.B \-\-system disconnect
+also stops OnionFruitux's Tor and does not open a browser. Then, if a Tor
+process was started with OnionFruitux's torrc and is still running, stop that
+process only:
+.EX
+ps \-eo pid,args | grep /var/lib/onionfruitux/torrc
+sudo kill PID
+.EE
+On 1.0.1 or later, one command does both:
+.EX
+onionfruitux panic\-off
+.EE
 .SH FILES
 .TP
 .I ~/.config/onionfruitux/config.json

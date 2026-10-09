@@ -11,7 +11,15 @@ from dataclasses import dataclass
 from onionfruitux import bridges
 from onionfruitux.config import Config
 from onionfruitux.firewall import render_firewall
-from onionfruitux.paths import TOR_USER
+from onionfruitux.listeners import distro_tor_listeners, our_port_conflicts
+from onionfruitux.paths import (
+    CONTROL_PORT,
+    DNS_PORT,
+    DISTRO_TOR_PORT,
+    SOCKS_PORT,
+    TOR_USER,
+    TRANS_PORT,
+)
 from onionfruitux.torrc import geoip_paths
 
 
@@ -90,6 +98,7 @@ def collect_checks(cfg: Config) -> list[Check]:
         Check("pkexec", bool(pkexec), pkexec or "install polkit", required=False)
     )
     checks.append(_qt_check())
+    checks.extend(_port_checks())
     checks.append(_nft_syntax_check(cfg, nft))
     return checks
 
@@ -107,6 +116,48 @@ def doctor_status(checks: list[Check]) -> int:
     if all(check.ok or not check.required for check in checks):
         return 0
     return 1
+
+
+def _port_checks() -> list[Check]:
+    checks = []
+    conflicts = our_port_conflicts()
+    if conflicts:
+        for message in conflicts:
+            checks.append(Check("ports", False, message))
+    else:
+        checks.append(
+            Check(
+                "ports",
+                True,
+                f"{TRANS_PORT}, {DNS_PORT}, {SOCKS_PORT}, and {CONTROL_PORT} are free",
+            )
+        )
+    holders = distro_tor_listeners()
+    if holders:
+        who = "; ".join(holders)
+        checks.append(
+            Check(
+                "system Tor",
+                True,
+                (
+                    f"another Tor is listening on 127.0.0.1:{DISTRO_TOR_PORT} ({who}). "
+                    "That is usually Ubuntu's tor.service. OnionFruitux uses its own "
+                    "ports and does not stop that service. To stop it yourself: "
+                    "sudo systemctl disable --now tor.service tor@default.service"
+                ),
+                required=False,
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "system Tor",
+                True,
+                f"nothing is listening on {DISTRO_TOR_PORT}",
+                required=False,
+            )
+        )
+    return checks
 
 
 def _qt_check() -> Check:
