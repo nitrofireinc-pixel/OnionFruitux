@@ -1,0 +1,271 @@
+.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0" "User Commands"
+.SH NAME
+onionfruitux \- send this computer's internet through Tor
+.SH SYNOPSIS
+.B onionfruitux
+.br
+.B onionfruitux
+.I tray
+.br
+.B onionfruitux route add
+.I name
+[\fB\-\-entry\fR \fIcc\fR]
+[\fB\-\-exit\fR \fIcc\fR]
+[\fB\-\-bridge\fR \fIkind\fR]
+[\fB\-\-strict\fR]
+.br
+.B onionfruitux route list
+.br
+.B onionfruitux route use
+.I name
+.br
+.B onionfruitux route remove
+.I name
+.br
+.B onionfruitux connect
+.br
+.B onionfruitux status
+.br
+.B onionfruitux new\-circuit
+.br
+.B onionfruitux disconnect
+.br
+.B onionfruitux doctor
+.br
+.B onionfruitux plan
+.br
+.B onionfruitux boot enable
+.br
+.B onionfruitux boot disable
+.SH DESCRIPTION
+.B OnionFruitux
+is a Linux switch that sends the computer's new internet connections through
+the Tor network. Open the window and turn the switch on, or run
+.BR onionfruitux\ connect .
+Turn the switch off and the computer uses its normal network again.
+.PP
+While the switch is on, OnionFruitux runs Tor as the system user
+.B onionfruitux
+and adds one nftables table named
+.BR onionfruitux .
+TCP connections are redirected into Tor. DNS is redirected into Tor, including
+lookups that would have gone to a home router, and
+.B .onion
+names can resolve through Tor's DNS port. DHCP keeps working. Other UDP is
+blocked. The local network stays direct unless that setting is turned off.
+Traffic that cannot go through Tor is rejected unless that check is turned off.
+.PP
+Turning the switch off deletes only the
+.B onionfruitux
+table and stops the Tor process OnionFruitux started.
+.PP
+When the switch turns on or off from the window, the tray, or
+.B connect
+and
+.BR disconnect ,
+OnionFruitux opens
+.I https://check.torproject.org/
+after the firewall change. Turn this off under Settings, Network, with
+.B "Open the Tor check page when the switch changes" .
+The boot service does not open a browser.
+.PP
+The first time the switch is turned on, the desktop asks for an administrator
+password so OnionFruitux can change the firewall. Polkit remembers that
+password for a little while.
+.PP
+OnionFruitux is an independent project by Nitrofire Computing. It is not
+affiliated with or endorsed by The Tor Project or DragonFruit Network.
+.SH COMMANDS
+With no arguments,
+.B onionfruitux
+opens the window. The window has the switch,
+.BR "New circuit" ,
+and
+.BR Settings .
+.TP
+.B tray
+Show a panel or dock icon with the same switch. The menu can turn the switch
+on or off, ask for a new circuit, or open the window.
+.TP
+.B route add \fIname\fR
+Save a named route. A later
+.B route add
+with the same name replaces that route.
+.B \-\-entry
+and
+.B \-\-exit
+take a two\-letter country code.
+.B \-\-bridge
+is one of
+.BR plain ,
+.BR obfs4 ,
+.BR snowflake ,
+.BR meek ,
+.BR webtunnel ,
+or
+.BR conjure .
+A bridge replaces the entry country.
+.B \-\-strict
+means only use the countries on the route.
+.TP
+.B route list
+List saved routes. The active route is marked with an asterisk.
+.TP
+.B route use \fIname\fR
+Choose the route the next connection will use. If the switch is already on,
+turn it off and on to use the new route.
+.TP
+.B route remove \fIname\fR
+Delete a saved route.
+.TP
+.B connect
+Turn the switch on. This starts Tor and installs the firewall table.
+.TP
+.B disconnect
+Turn the switch off.
+.TP
+.B status
+Print whether the switch is on, and the active route.
+.TP
+.B new\-circuit
+Ask Tor for a fresh path. The switch must already be on.
+.TP
+.B doctor
+Check that Tor, nftables, the
+.B onionfruitux
+user, GeoIP data, and any selected bridge transport are present. When
+.B nft
+can run, the planned rules are checked with
+.B nft \-c
+and are not installed.
+.B doctor
+does not change the network or start Tor.
+.TP
+.B plan
+Print the torrc and the nftables rules for the current settings. This command
+changes nothing.
+.TP
+.B boot enable
+Save the current settings and turn routing on at startup. It does not turn the
+switch on now.
+.TP
+.B boot disable
+Do not turn routing on at startup. It does not turn off a switch that is
+already on.
+.SH SETTINGS
+Open
+.B Settings
+in the window.
+.TP
+.B Routes
+.B New route
+asks for a name, an entry country, and an exit country. Sites see the exit
+country. Choose
+.B "Only use the countries I picked"
+when a circuit that ignores those countries is not acceptable. A route can
+also remember a bridge.
+.TP
+.B Bridges
+Optional. Plain, obfs4, Snowflake, meek, WebTunnel, and Conjure. Snowflake,
+meek, and obfs4 can use the published default bridges shipped in
+.IR onionfruitux/data/pt_config.json .
+Paste lines from
+.I https://bridges.torproject.org
+when a network blocks the defaults, or for plain, WebTunnel, and Conjure.
+.TP
+.B Network
+Keep the local network off Tor, block traffic that cannot use Tor, and list
+relay ports (for example
+.IR "80, 443" )
+when a firewall only allows those outbound ports. Those ports are written as
+Tor's
+.B FascistFirewall
+and
+.B ReachableAddresses
+settings.
+.SH INSTALL
+Debian, Ubuntu, Linux Mint, Pop!_OS, Fedora, Arch, Manjaro, and openSUSE:
+
+.EX
+git clone https://github.com/nitrofireinc-pixel/OnionFruitux.git
+cd OnionFruitux
+sudo ./install.sh
+.EE
+
+The installer uses apt, dnf, pacman, or zypper. It installs Tor, nftables, a
+bridge transport when the distribution has one (lyrebird, obfs4proxy, or
+snowflake\-client), and the Qt libraries used by the window. It creates the
+system user
+.BR onionfruitux .
+It installs this manual to
+.I /usr/share/man/man1/onionfruitux.1.gz
+and refreshes the manual index with
+.B mandb
+when that program is present.
+.PP
+Then pin OnionFruitux to the dock or panel, or run
+.B onionfruitux
+or
+.BR "onionfruitux tray" .
+.SH UNINSTALL
+.EX
+sudo ./uninstall.sh
+.EE
+removes the program, this manual, the firewall table, and OnionFruitux's Tor
+process. The
+.B tor
+and
+.B nftables
+packages stay installed.
+.EX
+sudo ./uninstall.sh \-\-purge
+.EE
+also removes the
+.B onionfruitux
+user and
+.IR /var/lib/onionfruitux .
+.SH FILES
+.TP
+.I ~/.config/onionfruitux/config.json
+Routes, bridge lines, and network settings for the current user.
+.I XDG_CONFIG_HOME
+is used when it is set.
+.TP
+.I /var/lib/onionfruitux/torrc
+The torrc written when the switch turns on.
+.TP
+.I /var/lib/onionfruitux/tor/
+Tor's data directory, owned by the
+.B onionfruitux
+user.
+.TP
+.I /var/lib/onionfruitux/state.json
+Whether the switch is on. Status reads this file.
+.TP
+.I /etc/onionfruitux/boot.json
+Settings saved by
+.BR "boot enable" .
+.TP
+.I /usr/lib/systemd/system/onionfruitux.service
+Startup unit. It is installed disabled.
+.B boot enable
+enables it and does not start it.
+.TP
+.I /usr/share/man/man1/onionfruitux.1.gz
+This manual.
+.TP
+.I /usr/share/polkit\-1/actions/com.nitrofire.onionfruitux.policy
+Administrator password prompt for the firewall change.
+.TP
+.I /usr/share/tor/geoip
+Country database from the
+.B tor
+package. Country selection needs it.
+.TP
+.I onionfruitux/data/pt_config.json
+Published default bridges.
+.I onionfruitux/data/PT_CONFIG_SOURCE.txt
+records the Tor Project file they were copied from.
+.SH SEE ALSO
+.BR tor (1),
+.BR nft (8)
