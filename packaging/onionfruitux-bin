@@ -1,0 +1,6 @@
+#!/bin/sh
+# /bin/sh is dash on Debian and Ubuntu, and dash has no argv0 option
+# for exec. Re-exec through Python with argv[0] set to onionfruitux so
+# the desktop file and window class still match.
+export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -c 'import os, sys; os.execv(sys.executable, ["onionfruitux", "-m", "onionfruitux", *sys.argv[1:]])' "$@"

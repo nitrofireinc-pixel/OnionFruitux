@@ -15,6 +15,8 @@ from onionfruitux.paths import (
     TOR_DATA,
     TOR_USER,
     TRANS_PORT,
+    VIRTUAL_IPV4,
+    VIRTUAL_IPV6,
 )
 
 _GEO_CANDIDATES = (
@@ -44,8 +46,8 @@ def render_torrc(cfg: Config, route: Route | None = None) -> str:
         f"TransPort [::1]:{TRANS_PORT} IsolateClientAddr",
         f"DNSPort 127.0.0.1:{DNS_PORT}",
         f"DNSPort [::1]:{DNS_PORT}",
-        "VirtualAddrNetworkIPv4 10.192.0.0/10",
-        "VirtualAddrNetworkIPv6 [FC00::]/7",
+        f"VirtualAddrNetworkIPv4 {VIRTUAL_IPV4}",
+        f"VirtualAddrNetworkIPv6 [{VIRTUAL_IPV6.split('/', 1)[0].upper()}]/{VIRTUAL_IPV6.split('/', 1)[1]}",
         "AutomapHostsOnResolve 1",
         "",
         f"ControlPort 127.0.0.1:{CONTROL_PORT}",
