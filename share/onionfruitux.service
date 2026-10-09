@@ -1,0 +1,14 @@
+[Unit]
+Description=OnionFruitux whole-computer Tor routing
+Documentation=man:onionfruitux(1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/onionfruitux --system connect
+ExecStop=/usr/bin/onionfruitux --system disconnect
+
+[Install]
+WantedBy=multi-user.target

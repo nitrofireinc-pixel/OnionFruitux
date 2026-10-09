@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OnionFruitux
+GenericName=Tor gateway
+Comment=Send this computer's internet through Tor
+Exec=onionfruitux
+Icon=onionfruitux
+Terminal=false
+Categories=Network;Security;
+Keywords=tor;privacy;onion;
+StartupNotify=true

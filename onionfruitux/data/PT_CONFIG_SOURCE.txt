@@ -1,0 +1,7 @@
+https://gitlab.torproject.org/tpo/applications/tor-browser-build/-/raw/main/projects/tor-expert-bundle/pt_config.json
+
+Published default bridge lines in pt_config.json are copied from the Tor Project
+file above (tor-browser-build, projects/tor-expert-bundle/pt_config.json).
+Snowflake, meek, and obfs4 use these lines when a route has no pasted bridge
+lines of its own. Refresh pt_config.json from that file when Tor Browser ships
+new defaults.
