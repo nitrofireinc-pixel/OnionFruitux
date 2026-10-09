@@ -20,6 +20,7 @@ from pathlib import Path
 from onionfruitux.config import Config
 from onionfruitux.errors import OnionError
 from onionfruitux.firewall import render_firewall
+from onionfruitux.listeners import our_port_conflicts
 from onionfruitux.paths import (
     BOOT_PATH,
     COOKIE_PATH,
@@ -28,11 +29,11 @@ from onionfruitux.paths import (
     PID_PATH,
     STATE_DIR,
     STATE_PATH,
+    STDERR_PATH,
     TABLE_NAME,
     TOR_DATA,
     TOR_USER,
     TORRC_PATH,
-    TRANS_PORT,
     UNIT_PATH,
     UNIT_PATH_FALLBACK,
 )
@@ -80,9 +81,6 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
         if progress is not None:
             progress(message)
 
-    def abort() -> None:
-        _check_heartbeat(heartbeat_file)
-
     _prepare_runtime()
     rules = render_firewall(cfg.network)
     _assert_only_our_table(rules)
@@ -90,14 +88,29 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
     # Replace a previous OnionFruitux Tor before the new one binds the ports.
     stop_tor()
     _reset_log()
+    # Checked again as root, after our previous Tor has been stopped, so the
+    # message can name the other process. Never connect to TransPort to see
+    # if it is open: Tor 0.4.9 crashes when a plain TCP connection hits it.
+    conflicts = our_port_conflicts()
+    if conflicts:
+        raise OnionError("\n".join(conflicts))
     report("Starting Tor…")
+    proc_box: dict[str, subprocess.Popen] = {}
+    phase = {"text": "opening its listeners"}
+
+    def abort() -> None:
+        _check_heartbeat(heartbeat_file)
+        proc = proc_box.get("proc")
+        if proc is not None and _process_gone(proc):
+            raise OnionError(_tor_died_message(proc, phase["text"]))
+
     try:
         proc = _spawn_tor()
-        report("Waiting for Tor to open its proxy…")
-        if not _wait_port(TRANS_PORT, PORT_TIMEOUT, abort=abort):
-            raise OnionError(
-                "Tor did not open its transparent proxy port. The firewall was not changed."
-            )
+        proc_box["proc"] = proc
+        report("Waiting for Tor to open its listeners…")
+        if not _wait_for_listeners(PORT_TIMEOUT, abort=abort):
+            raise OnionError(_listeners_timeout_message(proc))
+        phase["text"] = "finishing the connection"
         report("Waiting for Tor to finish connecting…")
         percent = _wait_bootstrap(BOOTSTRAP_TIMEOUT, progress=progress, abort=abort)
         if percent != 100:
@@ -278,31 +291,41 @@ def _install_torrc(cfg: Config) -> None:
 
 
 def _spawn_tor() -> subprocess.Popen:
+    STDERR_PATH.parent.mkdir(parents=True, exist_ok=True)
+    stderr = STDERR_PATH.open("ab")
     try:
         proc = subprocess.Popen(
             ["tor", "-f", str(TORRC_PATH)],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr,
             start_new_session=True,
         )
     except FileNotFoundError as exc:
         raise OnionError("tor is not installed") from exc
+    finally:
+        stderr.close()
     PID_PATH.write_text(f"{proc.pid}\n", encoding="utf-8")
     return proc
 
 
 def _reset_log() -> None:
     """Drop a previous bootstrap line so a new Tor has to reach 100% itself."""
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_PATH.write_text("", encoding="utf-8")
-    try:
-        user = pwd.getpwnam(TOR_USER)
-    except KeyError:
-        user = None
-    if user is not None:
-        os.chown(LOG_PATH, user.pw_uid, user.pw_gid)
-    os.chmod(LOG_PATH, 0o640)
+    _truncate_log(LOG_PATH, mode=0o640, own_by_tor=True)
+    _truncate_log(STDERR_PATH, mode=0o644, own_by_tor=False)
+
+
+def _truncate_log(path: Path, mode: int, own_by_tor: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+    if own_by_tor:
+        try:
+            user = pwd.getpwnam(TOR_USER)
+        except KeyError:
+            user = None
+        if user is not None:
+            os.chown(path, user.pw_uid, user.pw_gid)
+    os.chmod(path, mode)
 
 
 def _rollback_network() -> None:
@@ -492,27 +515,34 @@ def _stop_pid(pid: int) -> None:
             return
 
 
-def _wait_port(port: int, timeout: float, abort=None) -> bool:
+# A plain TCP connection to TransPort makes Tor 0.4.9 segfault. Readiness is
+# the notice log line Tor writes when that listener is open.
+_LISTENER_MARK = "Opened Transparent pf/netfilter listener"
+
+
+def _wait_for_listeners(timeout: float, abort=None) -> bool:
+    """Wait until Tor's log says the transparent listener is open.
+
+    This never connects to TransPort or DNSPort.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         if abort is not None:
             abort()
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
-                return True
-        except OSError:
-            time.sleep(0.2)
+        if _listeners_opened():
+            return True
+        time.sleep(0.2)
     return False
+
+
+def _listeners_opened() -> bool:
+    return _LISTENER_MARK in _read_text(LOG_PATH)
 
 
 def _bootstrap_percent() -> int | None:
     import re
 
-    try:
-        text = LOG_PATH.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    found = re.findall(r"Bootstrapped (\d+)%", text)
+    found = re.findall(r"Bootstrapped (\d+)%", _read_text(LOG_PATH))
     if not found:
         return None
     return int(found[-1])
@@ -524,16 +554,136 @@ def _wait_bootstrap(timeout: float, progress=None, abort=None) -> int:
     while time.time() < deadline:
         if abort is not None:
             abort()
-        percent = _bootstrap_percent()
+        percent, summary = _current_bootstrap()
         if percent is not None and percent != last:
             last = percent
             if progress is not None:
-                progress(f"Tor bootstrap {percent}%…")
+                if summary:
+                    progress(f"Tor bootstrap {percent}% ({summary})…")
+                else:
+                    progress(f"Tor bootstrap {percent}%…")
         if percent == 100:
             return 100
         time.sleep(0.4)
-    percent = _bootstrap_percent()
+    percent, _summary = _current_bootstrap()
     return percent if percent is not None else 0
+
+
+def _current_bootstrap() -> tuple[int | None, str]:
+    """Prefer Tor's control port, and use the notice log when it is ahead."""
+    percent: int | None = None
+    summary = ""
+    control = _control_bootstrap()
+    if control is not None:
+        percent, summary = control
+    logged = _bootstrap_percent()
+    if logged is not None and (percent is None or logged > percent):
+        return logged, ""
+    return percent, summary
+
+
+def _control_bootstrap() -> tuple[int, str] | None:
+    """GETINFO status/bootstrap-phase. None when the control port is not ready."""
+    import re
+
+    if not COOKIE_PATH.exists():
+        return None
+    try:
+        reply = _control_getinfo(b"status/bootstrap-phase")
+    except (OSError, OnionError):
+        return None
+    match = re.search(r"PROGRESS=(\d+)", reply)
+    if not match:
+        return None
+    summary_match = re.search(r'SUMMARY="([^"]*)"', reply)
+    summary = summary_match.group(1) if summary_match else ""
+    return int(match.group(1)), summary
+
+
+def _control_getinfo(key: bytes) -> str:
+    cookie = COOKIE_PATH.read_bytes()
+    sock = socket.create_connection(("127.0.0.1", CONTROL_PORT), timeout=1)
+    try:
+        file = sock.makefile("rwb", buffering=0)
+        file.write(b"AUTHENTICATE " + cookie.hex().encode("ascii") + b"\r\n")
+        auth = _read_control_reply(file)
+        if not auth.startswith("250"):
+            raise OnionError("Tor refused the control cookie")
+        file.write(b"GETINFO " + key + b"\r\n")
+        reply = _read_control_reply(file)
+        file.write(b"QUIT\r\n")
+    finally:
+        sock.close()
+    if not reply.startswith("250"):
+        raise OnionError("Tor did not answer the bootstrap query")
+    return reply
+
+
+def _read_control_reply(file) -> str:
+    chunks = []
+    while True:
+        line = file.readline()
+        if not line:
+            break
+        chunks.append(line)
+        if not line.startswith(b"250-"):
+            break
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def _process_gone(proc) -> bool:
+    poll = getattr(proc, "poll", None)
+    if poll is None:
+        return False
+    return poll() is not None
+
+
+def _listeners_timeout_message(proc) -> str:
+    if _process_gone(proc):
+        return _tor_died_message(proc, "opening its listeners")
+    detail = _tor_output_tail()
+    message = (
+        "Tor did not open its listeners before the time limit. "
+        "The firewall was not changed."
+    )
+    if detail:
+        return message + "\n" + detail
+    return message
+
+
+def _tor_died_message(proc, phase: str) -> str:
+    code = getattr(proc, "returncode", None)
+    message = (
+        f"Tor stopped while {phase} (exit {code}). The firewall was not changed."
+    )
+    detail = _tor_output_tail()
+    if detail:
+        return message + "\n" + detail
+    return message
+
+
+def _tor_output_tail(limit: int = 20) -> str:
+    chunks = []
+    seen: set[str] = set()
+    for path in (LOG_PATH, STDERR_PATH):
+        for line in _tail_lines(path, limit):
+            if line in seen:
+                continue
+            seen.add(line)
+            chunks.append(line)
+    return "\n".join(chunks)
+
+
+def _tail_lines(path: Path, limit: int) -> list[str]:
+    lines = [line.strip() for line in _read_text(path).splitlines() if line.strip()]
+    return lines[-limit:]
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _signal_newnym() -> None:

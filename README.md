@@ -44,6 +44,20 @@ sudo apt install ./onionfruitux_*_all.deb
 
 The package is `Architecture: all`. apt installs `tor`, `nftables`, `python3-pyqt6`, `pkexec`, `polkitd` (or `policykit-1`), `xdg-utils`, `obfs4proxy`, and `snowflake-client`.
 
+Upgrading replaces the installed package. You do not need to remove it first:
+
+```bash
+sudo apt install ./onionfruitux_1.0.2-1_all.deb
+```
+
+If the switch is on, turn it off and on once after upgrading so Tor uses the new ports.
+
+Ubuntu's `tor` package starts its own Tor on port 9050 (`tor.service` and `tor@default.service`). OnionFruitux does not use that port, or 9051, or mDNS port 5353. It listens on 9140 (transparent proxy), 9153 (DNS), 9155 (SOCKS), and 9156 (control), and it does not stop the system Tor. `onionfruitux doctor` warns when that service is running. Stop it yourself only when you do not want it:
+
+```bash
+sudo systemctl disable --now tor.service tor@default.service
+```
+
 ### Fedora
 
 Download `onionfruitux-*.noarch.rpm` from the latest release, then:

@@ -1,4 +1,4 @@
-.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0.1" "User Commands"
+.TH ONIONFRUITUX 1 "October 2026" "OnionFruitux 1.0.2" "User Commands"
 .SH NAME
 onionfruitux \- send this computer's internet through Tor
 .SH SYNOPSIS
@@ -71,6 +71,21 @@ during connect does the same rollback.
 .PP
 The firewall is installed only after Tor's log reports Bootstrapped 100%.
 Until then the computer keeps its normal network.
+.PP
+OnionFruitux runs its own Tor. The transparent proxy is port 9140, DNS is
+port 9153, SOCKS is port 9155, and the control port is 9156. Those ports
+are not 9050 or 9051, which the
+.B tor
+package uses, and not 5353, which mDNS uses. Installing this package does
+not stop or disable Ubuntu's Tor service. If that service is running,
+.B onionfruitux doctor
+says so and leaves it running. To stop it yourself:
+.EX
+sudo systemctl disable \-\-now tor.service tor@default.service
+.EE
+If one of OnionFruitux's ports is already taken, the switch names the
+process that holds it. If Tor itself exits, the error includes the last
+lines of its log.
 .PP
 After the switch turns fully on, OnionFruitux opens
 .I https://check.torproject.org/

@@ -46,7 +46,7 @@ class ConnectOrderTests(unittest.TestCase):
         patches = self._common()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              patches[6], patches[7], \
-             patch.object(system, "_wait_port", return_value=True), \
+             patch.object(system, "_wait_for_listeners", return_value=True), \
              patch.object(system, "_wait_bootstrap", side_effect=bootstrap), \
              patch.object(system, "apply_ruleset", side_effect=apply), \
              patch.object(system, "_write_state") as state:
@@ -62,7 +62,7 @@ class ConnectOrderTests(unittest.TestCase):
         patches = self._common()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              patches[6], patches[7] as rollback, \
-             patch.object(system, "_wait_port", return_value=True), \
+             patch.object(system, "_wait_for_listeners", return_value=True), \
              patch.object(system, "_wait_bootstrap", return_value=40), \
              patch.object(system, "apply_ruleset") as apply:
             with self.assertRaises(OnionError) as caught:
@@ -73,7 +73,7 @@ class ConnectOrderTests(unittest.TestCase):
         self.assertIn("firewall was not changed", str(caught.exception))
 
     def test_stale_heartbeat_rolls_back_before_the_firewall(self):
-        def wait_port(port, timeout, abort=None):
+        def wait_listeners(timeout, abort=None):
             if abort is not None:
                 abort()
             return True
@@ -84,7 +84,7 @@ class ConnectOrderTests(unittest.TestCase):
             patches = self._common()
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
                  patches[6], patches[7] as rollback, \
-                 patch.object(system, "_wait_port", side_effect=wait_port), \
+                 patch.object(system, "_wait_for_listeners", side_effect=wait_listeners), \
                  patch.object(system, "apply_ruleset") as apply:
                 with self.assertRaises(OnionError) as caught:
                     system.connect(Config(), heartbeat_file=str(heartbeat))
@@ -99,7 +99,7 @@ class ConnectOrderTests(unittest.TestCase):
              patch.object(system, "_reset_log", side_effect=lambda: order.append("reset")), \
              patch.object(system, "_spawn_tor", side_effect=lambda: order.append("spawn") or _proc()), \
              patches[7], \
-             patch.object(system, "_wait_port", return_value=False):
+             patch.object(system, "_wait_for_listeners", return_value=False):
             with self.assertRaises(OnionError):
                 system.connect(Config())
         self.assertEqual(order, ["reset", "spawn"])
@@ -152,6 +152,63 @@ class ConnectOrderTests(unittest.TestCase):
         start = text.index("def _arm_parent_death")
         body = text[start:text.index("def _rollback_signal")]
         self.assertNotIn("getppid", body)
+
+    def test_busy_port_is_reported_before_tor_starts(self):
+        patches = self._common()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(
+                 system,
+                 "our_port_conflicts",
+                 return_value=[
+                     "OnionFruitux's SOCKS port 9155 is already in use by "
+                     "tor (pid 9) running as debian-tor. The firewall was not changed."
+                 ],
+             ), \
+             patch.object(system, "_spawn_tor") as spawn:
+            with self.assertRaises(OnionError) as caught:
+                system.connect(Config())
+        spawn.assert_not_called()
+        self.assertIn("9155", str(caught.exception))
+        self.assertIn("debian-tor", str(caught.exception))
+
+    def test_tor_exit_is_reported_immediately(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "notice.log"
+            err = Path(tmp) / "tor.stderr"
+            log.write_text(
+                "Bootstrapped 0% (starting)\nTor 0.4.9.11 died: Caught signal 11\n",
+                encoding="utf-8",
+            )
+            err.write_text("Caught signal 11\n", encoding="utf-8")
+            proc = type("Proc", (), {"pid": 42, "returncode": None})()
+
+            def poll():
+                proc.returncode = -11
+                return -11
+
+            proc.poll = poll
+
+            def wait_listeners(timeout, abort=None):
+                if abort is not None:
+                    abort()
+                return True
+
+            patches = self._common()
+            started = time.time()
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+                 patches[7], \
+                 patch.object(system, "_spawn_tor", return_value=proc), \
+                 patch.object(system, "_wait_for_listeners", side_effect=wait_listeners), \
+                 patch.object(system, "LOG_PATH", log), \
+                 patch.object(system, "STDERR_PATH", err), \
+                 patch.object(system, "apply_ruleset") as apply:
+                with self.assertRaises(OnionError) as caught:
+                    system.connect(Config())
+        self.assertLess(time.time() - started, 3)
+        text = str(caught.exception)
+        self.assertIn("Caught signal 11", text)
+        self.assertIn("firewall was not changed", text)
+        apply.assert_not_called()
 
     def test_bootstrap_percent_uses_the_latest_line(self):
         with tempfile.TemporaryDirectory() as tmp:

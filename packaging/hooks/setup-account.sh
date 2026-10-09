@@ -1,5 +1,7 @@
 #!/bin/sh
 # Create the Tor system user and data directories. Does not start Tor.
+# Do not disable tor.service. The tor package may start Ubuntu's own Tor on
+# port 9050. OnionFruitux binds different ports and leaves that service alone.
 set -eu
 
 if ! id -u onionfruitux >/dev/null 2>&1; then

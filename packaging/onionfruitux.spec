@@ -1,5 +1,5 @@
 Name: onionfruitux
-Version: 1.0.1
+Version: 1.0.2
 Release: 1
 Summary: Send this computer's internet through Tor
 License: GPL-3.0-or-later
@@ -70,6 +70,10 @@ fi
 /usr/lib/systemd/system/onionfruitux.service
 
 %changelog
+* Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.2-1
+- Bind OnionFruitux's Tor to its own ports so it can run beside Ubuntu's Tor and mDNS.
+- Read Tor's log instead of connecting to TransPort, which crashed Tor 0.4.9.
+
 * Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.1-1
 - Keep the window responsive while connecting, and roll the firewall back on failure.
 - Add onionfruitux panic-off.
