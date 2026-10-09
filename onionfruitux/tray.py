@@ -7,6 +7,7 @@ import sys
 from onionfruitux.cli import new_circuit_command
 from onionfruitux.errors import OnionError
 from onionfruitux.gui import PHASE_COLOR, MainWindow, _load_icon
+from onionfruitux.icons import install_app_icon
 from onionfruitux.qtutil import load_qt
 from onionfruitux.switchjob import SwitchJob
 from onionfruitux.system import read_status
@@ -17,8 +18,16 @@ def icon_for_phase(base, phase: str, QtGui, QtCore):
     color = QtGui.QColor(PHASE_COLOR.get(phase, PHASE_COLOR["off"]))
     source = base.pixmap(64, 64)
     if source.isNull():
+        source = _load_icon(QtGui).pixmap(64, 64)
+    if source.isNull():
         pixmap = QtGui.QPixmap(64, 64)
-        pixmap.fill(color)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setBrush(color)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.drawEllipse(pixmap.rect().adjusted(8, 14, -8, -6))
+        painter.end()
         return QtGui.QIcon(pixmap)
     tinted = QtGui.QPixmap(source.size())
     tinted.fill(QtCore.Qt.GlobalColor.transparent)
@@ -48,16 +57,12 @@ def run_tray() -> int:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("OnionFruitux")
     app.setQuitOnLastWindowClosed(False)
+    icon = install_app_icon(app, QtGui)
     if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
         print("This session has no panel tray. Opening the window.", file=sys.stderr)
         window = MainWindow()
         window.show()
         return app.exec()
-    icon = _load_icon(QtGui)
-    if icon is None:
-        icon = app.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
-    else:
-        app.setWindowIcon(icon)
     tray = QtWidgets.QSystemTrayIcon(icon)
     tray.setToolTip("OnionFruitux")
     menu = QtWidgets.QMenu()

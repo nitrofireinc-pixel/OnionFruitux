@@ -1,5 +1,5 @@
 Name: onionfruitux
-Version: 1.0.3
+Version: 1.0.4
 Release: 1
 Summary: Send this computer's internet through Tor
 License: GPL-3.0-or-later
@@ -88,6 +88,9 @@ fi
 /usr/lib/systemd/system/onionfruitux.service
 
 %changelog
+* Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.4-1
+- Use the onion icon for the open window and the tray.
+
 * Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.3-1
 - Accept redirected packets so the computer can actually use Tor.
 - Install the OnionFruitux icon at the sizes desktops look up.

@@ -5,6 +5,7 @@ GenericName=Tor gateway
 Comment=Send this computer's internet through Tor
 Exec=onionfruitux
 Icon=onionfruitux
+StartupWMClass=onionfruitux
 Terminal=false
 Categories=Network;Security;
 Keywords=tor;privacy;onion;

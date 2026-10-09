@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from onionfruitux.checkpage import open_check_page
 from onionfruitux.cli import new_circuit_command
@@ -20,10 +19,9 @@ from onionfruitux.config import (
 )
 from onionfruitux.countries import country_choices
 from onionfruitux.errors import OnionError
+from onionfruitux.icons import install_app_icon, load_onion_icon
 from onionfruitux.qtutil import load_qt
 from onionfruitux.system import read_status
-
-_DATA = Path(__file__).resolve().parent / "data"
 
 # Off is gray, connecting is orange, and fully connected is green.
 PHASE_COLOR = {
@@ -58,6 +56,7 @@ def run_window() -> int:
     QtCore, QtGui, QtWidgets = load_qt()
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("OnionFruitux")
+    install_app_icon(app, QtGui)
     app.setStyle("Fusion")
     app.setStyleSheet(_STYLE)
     window = MainWindow()
@@ -370,9 +369,7 @@ def create_main_window():
             self._turning_on = False
             self._job = None
             self.cfg = load_config()
-            icon = _load_icon(QtGui)
-            if icon is not None:
-                self.setWindowIcon(icon)
+            self.setWindowIcon(load_onion_icon(QtGui))
 
             title = QtWidgets.QLabel("OnionFruitux")
             title.setObjectName("title")
@@ -548,36 +545,9 @@ def _country_box(widgets, selected: str):
     return box
 
 
-def _icon_files() -> list[Path]:
-    """Installed PNGs first, then the copy in this repo, then the bundled SVG."""
-    files: list[Path] = []
-    roots = (
-        Path("/usr/share/icons/hicolor"),
-        Path(__file__).resolve().parents[1] / "share" / "icons" / "hicolor",
-    )
-    for root in roots:
-        for size in (16, 32, 48, 64, 128, 256):
-            path = root / f"{size}x{size}" / "apps" / "onionfruitux.png"
-            if path.is_file():
-                files.append(path)
-        if files:
-            return files
-    svg = _DATA / "onionfruitux.svg"
-    if svg.is_file():
-        files.append(svg)
-    return files
-
-
 def _load_icon(QtGui):
-    files = _icon_files()
-    if not files:
-        return None
-    icon = QtGui.QIcon()
-    for path in files:
-        icon.addFile(str(path))
-    if icon.isNull():
-        return None
-    return icon
+    """Onion icon for the window and the tray. Never a theme gear."""
+    return load_onion_icon(QtGui)
 
 
 # UserRole is 0x0100 in Qt.

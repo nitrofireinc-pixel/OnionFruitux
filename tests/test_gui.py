@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from onionfruitux.errors import OnionError
@@ -194,3 +195,25 @@ class GuiTests(unittest.TestCase):
             colors[phase] = icon.pixmap(64, 64).toImage().pixelColor(32, 32)
         self.assertGreater(colors["connecting"].red(), colors["off"].red())
         self.assertGreater(colors["on"].green(), colors["connecting"].green())
+
+    def test_window_and_tray_never_use_a_gear_icon(self):
+        from onionfruitux.icons import load_onion_icon, onion_png_paths
+
+        QtCore, QtGui, QtWidgets = load_qt()
+        app = QtWidgets.QApplication.instance()
+        icon = load_onion_icon(QtGui)
+        pixmap = icon.pixmap(64, 64)
+        self.assertFalse(pixmap.isNull())
+        self.assertGreaterEqual(len(onion_png_paths()), 6)
+        for name in ("gui.py", "tray.py", "icons.py"):
+            text = Path("onionfruitux", name).read_text(encoding="utf-8")
+            self.assertNotIn("standardIcon", text)
+            self.assertNotIn("SP_FileDialogDetailedView", text)
+            self.assertNotIn("SP_ComputerIcon", text)
+            self.assertNotIn("preferences-system", text)
+        desktop = Path("share/onionfruitux.desktop").read_text(encoding="utf-8")
+        self.assertIn("Icon=onionfruitux\n", desktop)
+        self.assertIn("StartupWMClass=onionfruitux\n", desktop)
+        self.assertIn("setDesktopFileName", Path("onionfruitux/icons.py").read_text(encoding="utf-8"))
+        self.assertIn("exec -a onionfruitux python3", Path("packaging/stage.sh").read_text(encoding="utf-8"))
+        del QtCore, app

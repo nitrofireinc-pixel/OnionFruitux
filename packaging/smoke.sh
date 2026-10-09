@@ -118,6 +118,7 @@ test -f /usr/share/icons/hicolor/scalable/apps/onionfruitux.svg
 test -f /usr/share/icons/hicolor/48x48/apps/onionfruitux.png
 test -f /usr/share/icons/hicolor/256x256/apps/onionfruitux.png
 grep -q '^Icon=onionfruitux$' /usr/share/applications/onionfruitux.desktop
+grep -q '^StartupWMClass=onionfruitux$' /usr/share/applications/onionfruitux.desktop
 test -f /usr/share/polkit-1/actions/com.nitrofire.onionfruitux.policy
 test -f /usr/lib/systemd/system/onionfruitux.service
 id onionfruitux >/dev/null

@@ -200,7 +200,7 @@ install_program() {
   cat > /usr/bin/onionfruitux <<'EOF'
 #!/bin/sh
 export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m onionfruitux "$@"
+exec -a onionfruitux python3 -m onionfruitux "$@"
 EOF
   chmod 755 /usr/bin/onionfruitux
 }
