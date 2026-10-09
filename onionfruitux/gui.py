@@ -5,7 +5,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from onionfruitux.cli import connect_command, disconnect_command, new_circuit_command
+from onionfruitux.checkpage import open_check_page
+from onionfruitux.cli import new_circuit_command
+from onionfruitux.switchjob import SwitchJob
 from onionfruitux.config import (
     BRIDGE_TYPES,
     Config,
@@ -22,6 +24,14 @@ from onionfruitux.qtutil import load_qt
 from onionfruitux.system import read_status
 
 _DATA = Path(__file__).resolve().parent / "data"
+
+# Off is gray, connecting is orange, and fully connected is green.
+PHASE_COLOR = {
+    "off": "#3a3548",
+    "connecting": "#e08a1e",
+    "disconnecting": "#e08a1e",
+    "on": "#3dba7a",
+}
 
 _STYLE = """
 QWidget { background: #16141f; color: #f4f1ea; font-size: 14px; }
@@ -65,14 +75,16 @@ def create_main_window():
             self.setFixedSize(88, 44)
             self.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             self.setAccessibleName("Tor switch")
+            self.phase = "off"
 
         def paintEvent(self, event):  # noqa: N802
+            phase = getattr(self, "phase", "on" if self.isChecked() else "off")
             painter = QtGui.QPainter(self)
             painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
             painter.setPen(QtCore.Qt.PenStyle.NoPen)
-            painter.setBrush(QtGui.QColor("#3dba7a" if self.isChecked() else "#3a3548"))
+            painter.setBrush(QtGui.QColor(PHASE_COLOR.get(phase, PHASE_COLOR["off"])))
             painter.drawRoundedRect(1, 6, 86, 32, 16, 16)
-            knob = 48 if self.isChecked() else 4
+            knob = 4 if phase == "off" else 48
             painter.setBrush(QtGui.QColor("#f7f4ef"))
             painter.drawEllipse(knob, 8, 28, 28)
             painter.end()
@@ -355,6 +367,8 @@ def create_main_window():
             self.setObjectName("mainWindow")
             self.resize(460, 420)
             self._busy = False
+            self._turning_on = False
+            self._job = None
             self.cfg = load_config()
             icon = _load_icon(QtGui)
             if icon is not None:
@@ -423,10 +437,18 @@ def create_main_window():
                 return
             self.cfg = load_config()
             state = read_status()
+            running = bool(state["running"])
             self._busy = True
-            self.switch.setChecked(bool(state["running"]))
+            self.switch.phase = "on" if running else "off"
+            self.switch.setChecked(running)
             self._busy = False
-            self._paint_status(bool(state["running"]))
+            self.switch.update()
+            self._paint_status(running)
+
+        def closeEvent(self, event):  # noqa: N802
+            # Do not wait for the worker. Exiting the process is what tells
+            # the privileged child to roll the firewall back.
+            event.accept()
 
         def _paint_status(self, running: bool):
             self.switch_label.setText("On" if running else "Off")
@@ -451,19 +473,51 @@ def create_main_window():
             if self._busy:
                 return
             self._busy = True
+            self._turning_on = checked
             self.switch.setEnabled(False)
-            try:
-                if checked:
-                    connect_command()
-                else:
-                    disconnect_command()
-            except OnionError as exc:
-                QtWidgets.QMessageBox.warning(self, "OnionFruitux", str(exc))
-                self.switch.setChecked(not checked)
-            finally:
-                self.switch.setEnabled(True)
-                self._busy = False
-            self.refresh()
+            self.switch.phase = "connecting" if checked else "disconnecting"
+            self.switch.update()
+            if checked:
+                self.switch_label.setText("Connecting")
+                self.status.setText("Asking for permission…")
+            else:
+                self.switch_label.setText("Disconnecting")
+                self.status.setText("Turning the firewall off…")
+            self.circuit.setEnabled(False)
+            job = SwitchJob(checked)
+            job.progress.connect(self._on_progress)
+            job.succeeded.connect(self._on_succeeded)
+            job.failed.connect(self._on_failed)
+            # Keep the thread alive until it finishes.
+            self._job = job
+            job.start()
+
+        def _on_progress(self, message: str):
+            self.status.setText(message)
+
+        def _on_succeeded(self):
+            turning_on = self._turning_on
+            self.switch.phase = "on" if turning_on else "off"
+            self.switch.setEnabled(True)
+            self._busy = False
+            self.switch.update()
+            self._paint_status(turning_on)
+            # Green means Tor finished and the firewall is in place. Open the
+            # check page from this process, which is the desktop user.
+            if turning_on and load_config().network.open_check_page:
+                open_check_page()
+
+        def _on_failed(self, message: str):
+            turning_on = self._turning_on
+            self.switch.blockSignals(True)
+            self.switch.setChecked(not turning_on)
+            self.switch.phase = "off" if turning_on else "on"
+            self.switch.blockSignals(False)
+            self.switch.setEnabled(True)
+            self._busy = False
+            self.switch.update()
+            self._paint_status(not turning_on)
+            QtWidgets.QMessageBox.warning(self, "OnionFruitux", message)
 
         def _new_circuit(self):
             try:
@@ -494,11 +548,33 @@ def _country_box(widgets, selected: str):
     return box
 
 
+def _icon_files() -> list[Path]:
+    """Installed PNGs first, then the copy in this repo, then the bundled SVG."""
+    files: list[Path] = []
+    roots = (
+        Path("/usr/share/icons/hicolor"),
+        Path(__file__).resolve().parents[1] / "share" / "icons" / "hicolor",
+    )
+    for root in roots:
+        for size in (16, 32, 48, 64, 128, 256):
+            path = root / f"{size}x{size}" / "apps" / "onionfruitux.png"
+            if path.is_file():
+                files.append(path)
+        if files:
+            return files
+    svg = _DATA / "onionfruitux.svg"
+    if svg.is_file():
+        files.append(svg)
+    return files
+
+
 def _load_icon(QtGui):
-    path = _DATA / "onionfruitux.svg"
-    if not path.exists():
+    files = _icon_files()
+    if not files:
         return None
-    icon = QtGui.QIcon(str(path))
+    icon = QtGui.QIcon()
+    for path in files:
+        icon.addFile(str(path))
     if icon.isNull():
         return None
     return icon

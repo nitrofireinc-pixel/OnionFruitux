@@ -4,11 +4,39 @@ from __future__ import annotations
 
 import sys
 
-from onionfruitux.cli import connect_command, disconnect_command, new_circuit_command
+from onionfruitux.cli import new_circuit_command
 from onionfruitux.errors import OnionError
-from onionfruitux.gui import MainWindow, _load_icon
+from onionfruitux.gui import PHASE_COLOR, MainWindow, _load_icon
 from onionfruitux.qtutil import load_qt
+from onionfruitux.switchjob import SwitchJob
 from onionfruitux.system import read_status
+
+
+def icon_for_phase(base, phase: str, QtGui, QtCore):
+    """Tint the tray icon to the same gray, orange, or green as the switch."""
+    color = QtGui.QColor(PHASE_COLOR.get(phase, PHASE_COLOR["off"]))
+    source = base.pixmap(64, 64)
+    if source.isNull():
+        pixmap = QtGui.QPixmap(64, 64)
+        pixmap.fill(color)
+        return QtGui.QIcon(pixmap)
+    tinted = QtGui.QPixmap(source.size())
+    tinted.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(tinted)
+    painter.drawPixmap(0, 0, source)
+    painter.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), color)
+    painter.end()
+    return QtGui.QIcon(tinted)
+
+
+def tray_tip(phase: str) -> str:
+    return {
+        "off": "OnionFruitux is off",
+        "connecting": "OnionFruitux is connecting",
+        "disconnecting": "OnionFruitux is turning off",
+        "on": "OnionFruitux is on",
+    }.get(phase, "OnionFruitux")
 
 
 def switch_label(running: bool) -> str:
@@ -25,9 +53,11 @@ def run_tray() -> int:
         window = MainWindow()
         window.show()
         return app.exec()
-    icon = _load_icon(QtGui) or app.style().standardIcon(
-        QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon
-    )
+    icon = _load_icon(QtGui)
+    if icon is None:
+        icon = app.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon)
+    else:
+        app.setWindowIcon(icon)
     tray = QtWidgets.QSystemTrayIcon(icon)
     tray.setToolTip("OnionFruitux")
     menu = QtWidgets.QMenu()
@@ -37,23 +67,52 @@ def run_tray() -> int:
     menu.addSeparator()
     quit_action = menu.addAction("Quit")
     window_holder: dict[str, object] = {}
+    state = {"busy": False, "phase": "off", "job": None}
+
+    def apply_phase(phase: str):
+        state["phase"] = phase
+        tray.setIcon(icon_for_phase(icon, phase, QtGui, QtCore))
+        tray.setToolTip(tray_tip(phase))
+        running = phase == "on"
+        if state["busy"] and phase == "connecting":
+            toggle.setText("Connecting…")
+        elif state["busy"] and phase == "disconnecting":
+            toggle.setText("Disconnecting…")
+        else:
+            toggle.setText(switch_label(running))
+        circuit.setEnabled(running and not state["busy"])
 
     def refresh():
+        if state["busy"]:
+            return
         running = bool(read_status()["running"])
-        toggle.setText(switch_label(running))
-        circuit.setEnabled(running)
-        tray.setToolTip("OnionFruitux is on" if running else "OnionFruitux is off")
+        apply_phase("on" if running else "off")
+
+    def on_progress(message: str):
+        tray.setToolTip(message)
+
+    def on_succeeded():
+        state["busy"] = False
+        apply_phase("on" if state["job"] and state["job"].turn_on else "off")
+
+    def on_failed(message: str):
+        turning_on = bool(state["job"] and state["job"].turn_on)
+        state["busy"] = False
+        apply_phase("off" if turning_on else "on")
+        QtWidgets.QMessageBox.warning(None, "OnionFruitux", message)
 
     def on_toggle():
-        running = bool(read_status()["running"])
-        try:
-            if running:
-                disconnect_command()
-            else:
-                connect_command()
-        except OnionError as exc:
-            QtWidgets.QMessageBox.warning(None, "OnionFruitux", str(exc))
-        refresh()
+        if state["busy"]:
+            return
+        running = state["phase"] == "on"
+        state["busy"] = True
+        apply_phase("disconnecting" if running else "connecting")
+        job = SwitchJob(not running)
+        job.progress.connect(on_progress)
+        job.succeeded.connect(on_succeeded)
+        job.failed.connect(on_failed)
+        state["job"] = job
+        job.start()
 
     def on_circuit():
         try:
