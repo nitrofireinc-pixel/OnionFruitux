@@ -197,12 +197,7 @@ install_program() {
   cp -a "$ROOT/onionfruitux" /usr/lib/onionfruitux/onionfruitux
   find /usr/lib/onionfruitux -type d -name __pycache__ -exec rm -rf {} +
   find /usr/lib/onionfruitux -type f -name '*.pyc' -delete
-  cat > /usr/bin/onionfruitux <<'EOF'
-#!/bin/sh
-export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
-exec -a onionfruitux python3 -m onionfruitux "$@"
-EOF
-  chmod 755 /usr/bin/onionfruitux
+  install -m 755 "$ROOT/packaging/onionfruitux-bin" /usr/bin/onionfruitux
 }
 
 install_man() {

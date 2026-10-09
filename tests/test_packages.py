@@ -1,6 +1,9 @@
 """Packaging metadata stays aligned with the app version and distro names."""
 
+import os
 import pathlib
+import subprocess
+import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -70,3 +73,39 @@ class PackageMetadataTests(unittest.TestCase):
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
         self.assertIn("softprops/action-gh-release", workflow)
         self.assertIn('tags:', workflow)
+
+    def test_launcher_runs_under_dash(self):
+        launcher = ROOT / "packaging" / "onionfruitux-bin"
+        text = launcher.read_text(encoding="utf-8")
+        self.assertNotIn("exec -a", text)
+        self.assertTrue(text.startswith("#!/bin/sh\n"))
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(ROOT)
+        result = subprocess.run(
+            ["dash", str(launcher), "plan"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("This command changes nothing", result.stdout)
+        self.assertIn("table inet onionfruitux", result.stdout)
+
+    def test_process_comm_is_the_app_name(self):
+        code = (
+            "from onionfruitux.__main__ import _name_process\n"
+            "_name_process()\n"
+            "print(open('/proc/self/comm', encoding='ascii').read().strip())\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=ROOT,
+            env={**os.environ, "PYTHONPATH": str(ROOT)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "onionfruitux")

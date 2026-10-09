@@ -38,12 +38,7 @@ cp -a "$ROOT/onionfruitux" "$DEST/usr/lib/onionfruitux/onionfruitux"
 find "$DEST/usr/lib/onionfruitux" -type d -name __pycache__ -exec rm -rf {} +
 find "$DEST/usr/lib/onionfruitux" -type f -name '*.pyc' -delete
 
-cat > "$DEST/usr/bin/onionfruitux" <<'EOF'
-#!/bin/sh
-export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
-exec -a onionfruitux python3 -m onionfruitux "$@"
-EOF
-chmod 755 "$DEST/usr/bin/onionfruitux"
+install -m 755 "$ROOT/packaging/onionfruitux-bin" "$DEST/usr/bin/onionfruitux"
 
 gzip -c -n -9 "$ROOT/share/man/onionfruitux.1" > "$DEST/usr/share/man/man1/onionfruitux.1.gz"
 chmod 644 "$DEST/usr/share/man/man1/onionfruitux.1.gz"
