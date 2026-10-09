@@ -168,6 +168,10 @@ class ManPageTests(unittest.TestCase):
         self.assertIn("/usr/share/man/man1/onionfruitux.1", uninstall)
         for manager in ("apt-get", "dnf", "pacman", "zypper"):
             self.assertIn(manager, install)
+        apt_block = install.split("install_packages()", 1)[1].split("apt)", 1)[1].split("dnf)", 1)[0]
+        self.assertNotIn("pkexec polkit", apt_block)
+        self.assertIn("polkitd", apt_block)
+        self.assertIn("policykit-1", apt_block)
         self.assertNotIn("systemctl enable", install)
         self.assertNotIn("systemctl start", install)
         unit = Path("share/onionfruitux.service").read_text(encoding="utf-8")

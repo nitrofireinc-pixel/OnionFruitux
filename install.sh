@@ -142,7 +142,12 @@ install_packages() {
   case "$PM" in
     apt)
       apt-get update
-      install_required tor nftables python3 pkexec polkit xdg-utils
+      # Debian and Ubuntu ship the daemon as polkitd, not polkit. pkexec is the
+      # password prompt. Older releases call the same package policykit-1.
+      install_required tor nftables python3 pkexec xdg-utils
+      if polkit_pkg=$(first_available polkitd policykit-1 polkit); then
+        pkg_install "$polkit_pkg"
+      fi
       qt=$(first_available python3-pyqt6 python3-pyside6) || die "python3-pyqt6 (or python3-pyside6) was not found"
       pkg_install "$qt"
       install_optional lyrebird obfs4proxy snowflake-client
