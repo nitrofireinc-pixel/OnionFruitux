@@ -221,7 +221,8 @@ class GuiTests(unittest.TestCase):
         self.assertNotIn("exec -a", launcher)
         self.assertNotIn("exec -a", stage)
         self.assertNotIn("exec -a", installer)
-        self.assertIn('["onionfruitux", "-m", "onionfruitux"', launcher)
+        self.assertNotIn("os.execv", launcher)
+        self.assertIn('exec python3 -m onionfruitux "$@"', launcher)
         self.assertIn("packaging/onionfruitux-bin", stage)
         self.assertIn("packaging/onionfruitux-bin", installer)
         del QtCore, app

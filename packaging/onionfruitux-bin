@@ -1,6 +1,8 @@
 #!/bin/sh
-# /bin/sh is dash on Debian and Ubuntu, and dash has no argv0 option
-# for exec. Re-exec through Python with argv[0] set to onionfruitux so
-# the desktop file and window class still match.
+# argv[0] has to stay the Python interpreter. Setting it to the bare name
+# onionfruitux makes Python search PATH, find this script, and store the
+# script in sys.executable. The window then starts its permission helper
+# with that path, the helper runs this script again, and pkexec never
+# starts, so the password dialog never appears.
 export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -c 'import os, sys; os.execv(sys.executable, ["onionfruitux", "-m", "onionfruitux", *sys.argv[1:]])' "$@"
+exec python3 -m onionfruitux "$@"

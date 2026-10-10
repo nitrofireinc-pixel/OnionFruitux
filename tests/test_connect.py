@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -171,6 +172,52 @@ class ConnectOrderTests(unittest.TestCase):
         spawn.assert_not_called()
         self.assertIn("9155", str(caught.exception))
         self.assertIn("debian-tor", str(caught.exception))
+
+    def test_leftover_onionfruitux_tor_is_not_called_a_permission_error(self):
+        patches = self._common()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+             patch.object(system, "_our_tor_pids", return_value=[4242]), \
+             patch.object(system, "_alive", return_value=True), \
+             patch.object(system, "_is_our_tor", return_value=True), \
+             patch.object(system, "_spawn_tor") as spawn:
+            with self.assertRaises(OnionError) as caught:
+                system.connect(Config())
+        spawn.assert_not_called()
+        message = str(caught.exception)
+        self.assertIn("previous Tor is still running", message)
+        self.assertIn("4242", message)
+        self.assertNotIn("permission", message)
+
+    def test_stop_tor_clears_a_leftover_instance(self):
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys, time; os.execv(sys.executable, "
+                "['tor', '-c', 'import time; time.sleep(30)', '-f', "
+                "'/var/lib/onionfruitux/torrc'])",
+            ]
+        )
+        try:
+            deadline = time.time() + 2
+            cmdline = b""
+            while time.time() < deadline:
+                try:
+                    cmdline = Path(f"/proc/{proc.pid}/cmdline").read_bytes()
+                except OSError:
+                    cmdline = b""
+                if cmdline.startswith(b"tor\x00"):
+                    break
+                time.sleep(0.05)
+            self.assertTrue(cmdline.startswith(b"tor\x00"), cmdline)
+            with tempfile.TemporaryDirectory() as tmp, \
+                 patch.object(system, "PID_PATH", Path(tmp) / "pid"):
+                system.stop_tor()
+            self.assertIsNotNone(proc.wait(timeout=3))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=3)
 
     def test_tor_exit_is_reported_immediately(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -503,7 +503,50 @@ def _executable() -> str:
     found = shutil.which("onionfruitux")
     if found:
         return found
-    return sys.executable
+    return _interpreter()
+
+
+def _is_python_binary(path: str) -> bool:
+    name = os.path.basename(path)
+    if name != "python3" and not name.startswith("python3."):
+        return False
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _interpreter() -> str:
+    """Absolute path of Python, never the onionfruitux shell wrapper.
+
+    v1.0.4 started the process with argv[0] set to the bare name
+    onionfruitux. Python searched PATH, found /usr/bin/onionfruitux, and
+    stored that script in sys.executable. The window used that path to
+    start the permission helper, so the helper ran the script again and
+    pkexec never started.
+    """
+    candidates: list[str] = []
+    try:
+        candidates.append(os.path.realpath("/proc/self/exe"))
+    except OSError:
+        pass
+    override = os.environ.get("ONIONFRUITUX_PYTHON")
+    if override:
+        candidates.append(override)
+    if sys.executable:
+        candidates.append(sys.executable)
+    found = shutil.which("python3")
+    if found:
+        candidates.append(found)
+    for path in candidates:
+        if _is_python_binary(path):
+            return path
+    raise OnionError("Could not find Python to ask for permission to change the firewall.")
+
+
+def _pkexec_stderr_path(error_file: str) -> Path:
+    return Path(str(error_file) + ".pkexec")
+
+
+def _pkexec_status_path(error_file: str) -> Path:
+    return Path(str(error_file) + ".pkexec-status")
 
 
 def escalate(
@@ -516,8 +559,15 @@ def escalate(
 ) -> int:
     target = error_file or str(error_path())
     Path(target).parent.mkdir(parents=True, exist_ok=True)
+    stderr_path = _pkexec_stderr_path(target)
+    status_path = _pkexec_status_path(target)
+    stderr_path.write_text("", encoding="utf-8")
+    status_path.write_text("", encoding="utf-8")
+    os.chmod(stderr_path, 0o644)
+    os.chmod(status_path, 0o644)
     exe = _executable()
-    if exe == sys.executable:
+    interpreter = _interpreter()
+    if exe == interpreter:
         command = [exe, "-m", "onionfruitux", "--privileged", *args, "--error-file", target]
     else:
         command = [exe, "--privileged", *args, "--error-file", target]
@@ -532,16 +582,27 @@ def escalate(
             Path(progress_file).write_text("", encoding="utf-8")
         except OSError:
             pass
-    # No pipes. A full stdout pipe is one way the window used to hang, and
-    # the polkit dialog needs the normal desktop session, not a captured tty.
-    proc = subprocess.Popen([sys.executable, "-c", _PKEXEC_SUPERVISOR, "pkexec", *command])
-    return _follow_privileged(
-        proc,
-        progress=progress,
-        progress_file=progress_file,
-        heartbeat_file=heartbeat_file,
-        timeout=PRIVILEGED_TIMEOUT if timeout is None else timeout,
-    )
+    # stdout stays on the terminal. A full stdout pipe is one way the window
+    # used to hang. stderr goes to a file so a refused pkexec can be shown;
+    # the password dialog itself is the desktop polkit agent, not the tty.
+    with stderr_path.open("a", encoding="utf-8") as stderr_handle:
+        proc = subprocess.Popen(
+            [interpreter, "-c", _PKEXEC_SUPERVISOR, "pkexec", *command],
+            stderr=stderr_handle,
+        )
+        code = _follow_privileged(
+            proc,
+            progress=progress,
+            progress_file=progress_file,
+            heartbeat_file=heartbeat_file,
+            timeout=PRIVILEGED_TIMEOUT if timeout is None else timeout,
+        )
+    try:
+        status_path.write_text(f"{code}\n", encoding="utf-8")
+        os.chmod(status_path, 0o644)
+    except OSError:
+        pass
+    return code
 
 
 def _follow_privileged(
@@ -634,11 +695,41 @@ def _wants_check_page(cfg: Config, open_page: bool | None) -> bool:
 
 def _escalate_failure(error_file: str | None) -> str:
     path = Path(error_file) if error_file else error_path()
+    helper = ""
     if path.exists():
-        text = path.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    return "Could not get permission to change the firewall."
+        helper = path.read_text(encoding="utf-8").strip()
+    code = _read_pkexec_status(path)
+    stderr = _read_pkexec_stderr(path)
+    parts: list[str] = []
+    if helper:
+        parts.append(helper)
+    else:
+        parts.append("Could not get permission to change the firewall.")
+    if code is not None:
+        parts.append(f"pkexec exited {code}.")
+    if stderr and stderr not in helper:
+        parts.append(stderr)
+    return "\n".join(parts)
+
+
+def _read_pkexec_status(error_file: Path) -> int | None:
+    try:
+        text = _pkexec_status_path(str(error_file)).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _read_pkexec_stderr(error_file: Path) -> str:
+    try:
+        return _pkexec_stderr_path(str(error_file)).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _record_error(args: argparse.Namespace, message: str) -> None:

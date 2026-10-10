@@ -87,8 +87,16 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
     _assert_only_our_table(rules)
     _install_torrc(cfg)
     # Replace a previous OnionFruitux Tor before the new one binds the ports.
+    # A leftover process from an earlier attempt is stopped here, after the
+    # password dialog, rather than reported as a permission failure.
     stop_tor()
     _reset_log()
+    leftover = [pid for pid in _our_tor_pids() if _alive(pid) and _is_our_tor(pid)]
+    if leftover:
+        raise OnionError(
+            "OnionFruitux's previous Tor is still running "
+            f"(pid {leftover[0]}). It was not replaced, and the firewall was not changed."
+        )
     # Checked again as root, after our previous Tor has been stopped, so the
     # message can name the other process. Never connect to TransPort to see
     # if it is open: Tor 0.4.9 crashes when a plain TCP connection hits it.
@@ -511,15 +519,21 @@ def _stop_pid(pid: int) -> None:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         return
+    if _wait_dead(pid):
+        return
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    _wait_dead(pid)
+
+
+def _wait_dead(pid: int) -> bool:
     for _ in range(50):
         if not _alive(pid):
-            return
+            return True
         time.sleep(0.1)
-    if _is_our_tor(pid):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
+    return not _alive(pid)
 
 
 # A plain TCP connection to TransPort makes Tor 0.4.9 segfault. Readiness is

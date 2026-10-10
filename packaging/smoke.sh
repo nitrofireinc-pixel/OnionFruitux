@@ -111,6 +111,13 @@ if [ -x /usr/bin/man.REAL ]; then
 fi
 
 test -x /usr/bin/onionfruitux
+# A rewritten argv0 makes Python treat this script as the interpreter, and
+# the permission helper then never reaches pkexec.
+grep -q '^exec python3 -m onionfruitux "$@"' /usr/bin/onionfruitux
+if grep -q 'os.execv' /usr/bin/onionfruitux; then
+  echo "launcher rewrites argv0 and skips pkexec" >&2
+  exit 1
+fi
 echo "manual: $(ls -l /usr/share/man/man1/onionfruitux.1.gz 2>&1)"
 test -f /usr/share/man/man1/onionfruitux.1.gz
 test -f /usr/share/applications/onionfruitux.desktop

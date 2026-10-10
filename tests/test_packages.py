@@ -12,11 +12,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 class PackageMetadataTests(unittest.TestCase):
     def test_version_matches_app(self):
         init = (ROOT / "onionfruitux" / "__init__.py").read_text(encoding="utf-8")
-        self.assertIn('__version__ = "1.0.4"', init)
+        self.assertIn('__version__ = "1.0.5"', init)
         spec = (ROOT / "packaging" / "onionfruitux.spec").read_text(encoding="utf-8")
         pkgbuild = (ROOT / "packaging" / "PKGBUILD").read_text(encoding="utf-8")
-        self.assertIn("Version: 1.0.4", spec)
-        self.assertIn("pkgver=1.0.4", pkgbuild)
+        self.assertIn("Version: 1.0.5", spec)
+        self.assertIn("pkgver=1.0.5", pkgbuild)
 
     def test_deb_depends_and_arch(self):
         script = (ROOT / "packaging" / "build-deb.sh").read_text(encoding="utf-8")
@@ -78,6 +78,8 @@ class PackageMetadataTests(unittest.TestCase):
         launcher = ROOT / "packaging" / "onionfruitux-bin"
         text = launcher.read_text(encoding="utf-8")
         self.assertNotIn("exec -a", text)
+        self.assertNotIn("os.execv", text)
+        self.assertIn('exec python3 -m onionfruitux "$@"', text)
         self.assertTrue(text.startswith("#!/bin/sh\n"))
         env = os.environ.copy()
         env["PYTHONPATH"] = str(ROOT)

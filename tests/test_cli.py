@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from io import StringIO
@@ -224,13 +225,82 @@ class CliTests(unittest.TestCase):
              patch.object(cli, "_follow_privileged", return_value=0):
             self.assertEqual(cli.escalate(["disconnect"]), 0)
         command = popen.call_args.args[0]
-        self.assertEqual(command[0], cli.sys.executable)
+        self.assertEqual(command[0], cli._interpreter())
+        self.assertTrue(os.path.basename(command[0]).startswith("python3"))
         self.assertIn("-c", command)
         self.assertIn("pkexec", command)
         self.assertIn("disconnect", command)
         self.assertNotIn("stdout", popen.call_args.kwargs)
-        self.assertNotIn("stderr", popen.call_args.kwargs)
+        stderr = popen.call_args.kwargs.get("stderr")
+        self.assertIsNot(stderr, subprocess.PIPE)
+        self.assertNotEqual(getattr(stderr, "name", None), None)
         self.assertIn("prctl", command[command.index("-c") + 1])
+
+    def test_rewritten_argv0_does_not_become_the_interpreter(self):
+        bindir = Path(self.tmp.name) / "bin"
+        bindir.mkdir()
+        wrapper = bindir / "onionfruitux"
+        wrapper.write_text("#!/bin/sh\necho wrapper\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        probe = (
+            "from onionfruitux.cli import _interpreter\n"
+            "import sys\n"
+            "print(_interpreter())\n"
+            "print(sys.executable)\n"
+        )
+        env = os.environ.copy()
+        env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys; os.execv(sys.executable, ['onionfruitux', '-c', %r])" % probe,
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        interpreter, stored = result.stdout.splitlines()
+        self.assertTrue(os.path.basename(interpreter).startswith("python3"))
+        self.assertNotEqual(interpreter, str(wrapper))
+        self.assertTrue(stored == "" or stored == str(wrapper))
+
+    def test_escalate_records_pkexec_exit_and_stderr(self):
+        bindir = Path(self.tmp.name) / "bin"
+        bindir.mkdir()
+        log = Path(self.tmp.name) / "pkexec.log"
+        fake = bindir / "pkexec"
+        fake.write_text(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$PKEXEC_LOG\"\necho 'Not authorized' >&2\nexit 127\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        error = Path(self.tmp.name) / "last-error"
+        env_path = str(bindir) + os.pathsep + os.environ.get("PATH", "")
+        with patch.dict(os.environ, {"PATH": env_path, "PKEXEC_LOG": str(log)}):
+            code = cli.escalate(["disconnect"], error_file=str(error), timeout=5)
+        self.assertEqual(code, 127)
+        message = cli._escalate_failure(str(error))
+        self.assertIn("Could not get permission to change the firewall.", message)
+        self.assertIn("pkexec exited 127.", message)
+        self.assertIn("Not authorized", message)
+        recorded = log.read_text(encoding="utf-8")
+        self.assertIn("--privileged", recorded)
+        self.assertIn("disconnect", recorded)
+        self.assertNotIn("-c", recorded.split()[0] if recorded else "")
+
+    def test_helper_error_is_kept_with_pkexec_status(self):
+        error = Path(self.tmp.name) / "last-error"
+        error.write_text("Tor did not finish connecting before the time limit.\n", encoding="utf-8")
+        cli._pkexec_status_path(str(error)).write_text("1\n", encoding="utf-8")
+        cli._pkexec_stderr_path(str(error)).write_text("Tor did not finish connecting before the time limit.\n", encoding="utf-8")
+        message = cli._escalate_failure(str(error))
+        self.assertIn("Tor did not finish connecting", message)
+        self.assertIn("pkexec exited 1.", message)
+        self.assertNotIn("Could not get permission", message)
 
     def test_supervisor_returns_the_child_status(self):
         result = subprocess.run(

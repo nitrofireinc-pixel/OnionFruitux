@@ -1,5 +1,5 @@
 Name: onionfruitux
-Version: 1.0.4
+Version: 1.0.5
 Release: 1
 Summary: Send this computer's internet through Tor
 License: GPL-3.0-or-later
@@ -88,6 +88,10 @@ fi
 /usr/lib/systemd/system/onionfruitux.service
 
 %changelog
+* Sat Oct 10 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.5-1
+- Ask for the firewall password with pkexec again.
+- Show pkexec's exit code and message when that step fails.
+
 * Fri Oct 09 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.4-1
 - Use the onion icon for the open window and the tray.
 
