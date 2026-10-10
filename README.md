@@ -53,7 +53,7 @@ The package is `Architecture: all`. apt installs `tor`, `nftables`, `python3-pyq
 Upgrading replaces the installed package. You do not need to remove it first:
 
 ```bash
-sudo apt install ./onionfruitux_1.0.5-1_all.deb
+sudo apt install ./onionfruitux_1.0.6-1_all.deb
 ```
 
 If the switch is on, turn it off and on once after upgrading.
