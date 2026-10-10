@@ -197,12 +197,7 @@ install_program() {
   cp -a "$ROOT/onionfruitux" /usr/lib/onionfruitux/onionfruitux
   find /usr/lib/onionfruitux -type d -name __pycache__ -exec rm -rf {} +
   find /usr/lib/onionfruitux -type f -name '*.pyc' -delete
-  cat > /usr/bin/onionfruitux <<'EOF'
-#!/bin/sh
-export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m onionfruitux "$@"
-EOF
-  chmod 755 /usr/bin/onionfruitux
+  install -m 755 "$ROOT/packaging/onionfruitux-bin" /usr/bin/onionfruitux
 }
 
 install_man() {
@@ -220,6 +215,11 @@ install_desktop() {
   install -d /usr/share/applications /usr/share/icons/hicolor/scalable/apps
   install -m 644 "$ROOT/share/onionfruitux.desktop" /usr/share/applications/onionfruitux.desktop
   install -m 644 "$ROOT/share/onionfruitux.svg" /usr/share/icons/hicolor/scalable/apps/onionfruitux.svg
+  for size in 16 32 48 64 128 256; do
+    install -d "/usr/share/icons/hicolor/${size}x${size}/apps"
+    install -m 644 "$ROOT/share/icons/hicolor/${size}x${size}/apps/onionfruitux.png" \
+      "/usr/share/icons/hicolor/${size}x${size}/apps/onionfruitux.png"
+  done
   if [ -d /usr/share/polkit-1/actions ]; then
     install -m 644 "$ROOT/share/com.nitrofire.onionfruitux.policy" \
       /usr/share/polkit-1/actions/com.nitrofire.onionfruitux.policy

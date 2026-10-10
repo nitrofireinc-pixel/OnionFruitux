@@ -1,0 +1,20 @@
+pkgname=onionfruitux
+pkgver=1.0.5
+pkgrel=1
+pkgdesc="Send this computer's internet through Tor"
+arch=('any')
+url="https://github.com/nitrofireinc-pixel/OnionFruitux"
+license=('GPL-3.0-or-later')
+depends=('python' 'tor' 'nftables' 'python-pyqt6' 'polkit' 'xdg-utils')
+# obfs4proxy and snowflake-client are not in the official Arch repositories.
+optdepends=(
+  'obfs4proxy: obfs4 bridges'
+  'snowflake-client: Snowflake bridges'
+)
+options=('!debug' '!strip')
+install=onionfruitux.install
+sha256sums=()
+
+package() {
+  bash "$startdir/stage.sh" "$pkgdir"
+}
