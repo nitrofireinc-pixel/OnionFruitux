@@ -1,0 +1,8 @@
+#!/bin/sh
+# argv[0] has to stay the Python interpreter. Setting it to the bare name
+# onionfruitux makes Python search PATH, find this script, and store the
+# script in sys.executable. The window then starts its permission helper
+# with that path, the helper runs this script again, and pkexec never
+# starts, so the password dialog never appears.
+export PYTHONPATH="/usr/lib/onionfruitux${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m onionfruitux "$@"

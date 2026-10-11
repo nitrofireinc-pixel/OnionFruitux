@@ -25,8 +25,14 @@ class TorrcTests(unittest.TestCase):
         self.assertIn("ExitNodes {us}", text)
         self.assertIn("StrictNodes 1", text)
         self.assertNotIn("UseBridges", text)
-        self.assertIn("TransPort 127.0.0.1:9040", text)
-        self.assertIn("DNSPort 127.0.0.1:5353", text)
+        self.assertIn("TransPort 127.0.0.1:9140", text)
+        self.assertIn("DNSPort 127.0.0.1:9153", text)
+        self.assertIn("SocksPort 127.0.0.1:9155", text)
+        self.assertIn("ControlPort 127.0.0.1:9156", text)
+        self.assertNotIn(":9040", text)
+        self.assertNotIn(":5353", text)
+        self.assertNotIn(":9050", text)
+        self.assertNotIn(":9051", text)
         self.assertIn("AutomapHostsOnResolve 1", text)
         self.assertIn("User onionfruitux", text)
 
@@ -69,6 +75,7 @@ class TorrcTests(unittest.TestCase):
     def test_onion_mapping_without_a_route(self):
         text = render_torrc(Config())
         self.assertIn("VirtualAddrNetworkIPv4 10.192.0.0/10", text)
+        self.assertIn("VirtualAddrNetworkIPv6 [FC00:192::]/32", text)
         self.assertNotIn("EntryNodes", text)
         self.assertNotIn("UseBridges", text)
 
@@ -81,7 +88,17 @@ class FirewallTests(unittest.TestCase):
         self.assertIn("table inet onionfruitux {", text)
         self.assertIn("meta skuid onionfruitux return", text)
         self.assertIn("udp dport { 67, 68, 546, 547 } return", text)
-        self.assertIn("meta l4proto tcp redirect to :9040", text)
+        self.assertIn("udp dport 53 redirect to :9153", text)
+        self.assertIn("tcp dport 53 redirect to :9153", text)
+        self.assertIn("meta l4proto tcp redirect to :9140", text)
+        self.assertLess(
+            text.index("10.192.0.0/10 meta l4proto tcp redirect"),
+            text.index("192.168.0.0/16"),
+        )
+        self.assertLess(text.index("ct status dnat accept"), text.index("meta l4proto udp reject"))
+        self.assertNotIn("10.0.0.0/8", text)
+        self.assertNotIn(":9040", text)
+        self.assertNotIn(":5353", text)
         self.assertIn("meta l4proto udp reject", text)
         self.assertTrue(text.strip().endswith("}"))
 

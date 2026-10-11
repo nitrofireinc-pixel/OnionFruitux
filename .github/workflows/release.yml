@@ -1,0 +1,110 @@
+name: Release packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install package build tools
+        run: sudo apt-get update && sudo apt-get install -y rpm zstd
+
+      - name: Build Debian package
+        run: bash packaging/build-deb.sh
+
+      - name: Build RPM
+        run: bash packaging/build-rpm.sh
+
+      - name: Build Arch package
+        run: bash packaging/build-arch-portable.sh
+
+      - name: Install the Debian package on Debian and Ubuntu
+        run: |
+          set -eu
+          pull() {
+            image=$1
+            attempt=0
+            while [ "$attempt" -lt 4 ]; do
+              if docker pull "$image"; then
+                return 0
+              fi
+              attempt=$((attempt + 1))
+              sleep 15
+            done
+            return 1
+          }
+          deb=$(echo dist/onionfruitux_*_all.deb)
+          base=$(basename "$deb")
+          for image in debian:bookworm ubuntu:24.04; do
+            pull "$image"
+            docker run --rm \
+              -v "$PWD/dist:/dist:ro" \
+              -v "$PWD/packaging/smoke.sh:/smoke.sh:ro" \
+              "$image" bash /smoke.sh "/dist/$base"
+          done
+
+      - name: Install the RPM on Fedora and openSUSE
+        run: |
+          set -eu
+          pull() {
+            image=$1
+            attempt=0
+            while [ "$attempt" -lt 4 ]; do
+              if docker pull "$image"; then
+                return 0
+              fi
+              attempt=$((attempt + 1))
+              sleep 15
+            done
+            return 1
+          }
+          rpmfile=$(echo dist/onionfruitux-*.noarch.rpm)
+          base=$(basename "$rpmfile")
+          for image in fedora:41 opensuse/tumbleweed:latest; do
+            pull "$image"
+            docker run --rm \
+              -v "$PWD/dist:/dist:ro" \
+              -v "$PWD/packaging/smoke.sh:/smoke.sh:ro" \
+              "$image" bash /smoke.sh "/dist/$base"
+          done
+
+      - name: Install the Arch package
+        run: |
+          set -eu
+          pull() {
+            attempt=0
+            while [ "$attempt" -lt 4 ]; do
+              if docker pull archlinux:base; then
+                return 0
+              fi
+              attempt=$((attempt + 1))
+              sleep 15
+            done
+            return 1
+          }
+          pull
+          pkg=$(echo dist/onionfruitux-*.pkg.tar.zst)
+          base=$(basename "$pkg")
+          docker run --rm \
+            -v "$PWD/dist:/dist:ro" \
+            -v "$PWD/packaging/smoke.sh:/smoke.sh:ro" \
+            archlinux:base bash /smoke.sh "/dist/$base"
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/onionfruitux_*_all.deb
+            dist/onionfruitux-*.noarch.rpm
+            dist/onionfruitux-*.pkg.tar.zst

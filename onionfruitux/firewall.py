@@ -3,16 +3,26 @@
 DNS is redirected before the local-network exceptions. A lookup that would
 have gone to a home router, or to a resolver on localhost, still enters Tor.
 The rules are text only until a privileged connect applies them.
+
+Redirected packets are accepted with `ct status dnat`. The filter hook runs
+in the same output pass, before the kernel moves the packet onto loopback, so
+`oifname "lo"` does not match them yet. Without the dnat accept, the final
+reject drops the connection and the computer has no web even though Tor is up.
 """
 
 from __future__ import annotations
 
 from onionfruitux.config import NetworkSettings
-from onionfruitux.paths import DNS_PORT, TABLE_NAME, TOR_USER, TRANS_PORT
+from onionfruitux.paths import DNS_PORT, TABLE_NAME, TOR_USER, TRANS_PORT, VIRTUAL_IPV4, VIRTUAL_IPV6
 
 _DHCP = "udp dport { 67, 68, 546, 547 }"
-_LAN_V4 = "ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }"
-_LAN_V6 = "ip6 daddr { fe80::/10, fc00::/7 }"
+# 10.192.0.0/10 is Tor's virtual range, so it is not part of this set.
+_LAN_V4 = (
+    "ip daddr { 10.0.0.0/9, 10.128.0.0/10, 172.16.0.0/12, "
+    "192.168.0.0/16, 169.254.0.0/16 }"
+)
+_LAN_V6_LINK = "ip6 daddr fe80::/10"
+_LAN_V6_ULA = f"ip6 daddr fc00::/7 ip6 daddr != {VIRTUAL_IPV6}"
 
 
 def render_firewall(
@@ -30,11 +40,15 @@ def render_firewall(
         f"        udp dport 53 redirect to :{DNS_PORT}",
         f"        tcp dport 53 redirect to :{DNS_PORT}",
         "        meta pkttype { broadcast, multicast } return",
-        '        oifname "lo" return',
     ]
     if settings.lan_direct:
+        nat.append(f"        ip daddr {VIRTUAL_IPV4} meta l4proto tcp redirect to :{TRANS_PORT}")
+        nat.append(f"        ip6 daddr {VIRTUAL_IPV6} meta l4proto tcp redirect to :{TRANS_PORT}")
+    nat.append('        oifname "lo" return')
+    if settings.lan_direct:
         nat.append(f"        {_LAN_V4} return")
-        nat.append(f"        {_LAN_V6} return")
+        nat.append(f"        {_LAN_V6_LINK} return")
+        nat.append(f"        {_LAN_V6_ULA} return")
     nat.extend(
         [
             "        ip daddr 224.0.0.0/4 return",
@@ -46,6 +60,7 @@ def render_firewall(
             "        type filter hook output priority filter; policy accept;",
             f"        meta skuid {tor_user} accept",
             "        ct state established,related accept",
+            "        ct status dnat accept",
             f"        {_DHCP} accept",
             "        udp sport 68 accept",
             "        icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert, nd-redirect } accept",
@@ -54,7 +69,8 @@ def render_firewall(
     )
     if settings.lan_direct:
         nat.append(f"        {_LAN_V4} accept")
-        nat.append(f"        {_LAN_V6} accept")
+        nat.append(f"        {_LAN_V6_LINK} accept")
+        nat.append(f"        {_LAN_V6_ULA} accept")
     nat.append("        meta l4proto udp reject")
     if settings.reject_non_tor:
         nat.append("        reject")

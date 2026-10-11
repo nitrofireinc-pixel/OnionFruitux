@@ -7,6 +7,7 @@ import shutil
 
 from onionfruitux import bridges
 from onionfruitux.config import Config, parse_relay_ports
+from onionfruitux.listeners import our_port_conflicts
 from onionfruitux.paths import TOR_USER
 from onionfruitux.torrc import geoip_paths
 
@@ -39,4 +40,5 @@ def validate_for_connect(cfg: Config) -> list[str]:
         parse_relay_ports(cfg.network.relay_ports)
     except ValueError as exc:
         errors.append(str(exc))
+    errors.extend(our_port_conflicts())
     return errors
