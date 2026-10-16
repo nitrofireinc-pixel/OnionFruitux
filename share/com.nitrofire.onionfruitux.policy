@@ -7,7 +7,7 @@
   <vendor_url>https://github.com/nitrofireinc-pixel/OnionFruitux</vendor_url>
   <action id="com.nitrofire.onionfruitux.manage">
     <description>Route this computer through Tor</description>
-    <message>Authentication is required to change the OnionFruitux firewall</message>
+    <message>Authentication is required to start or stop OnionFruitux's Tor</message>
     <defaults>
       <allow_any>auth_admin_keep</allow_any>
       <allow_inactive>auth_admin</allow_inactive>

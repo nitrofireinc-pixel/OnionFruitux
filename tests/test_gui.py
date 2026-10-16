@@ -19,7 +19,9 @@ class GuiTests(unittest.TestCase):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         self.tmp = tempfile.TemporaryDirectory()
         self._old = os.environ.get("XDG_CONFIG_HOME")
+        self._old_state = os.environ.get("XDG_STATE_HOME")
         os.environ["XDG_CONFIG_HOME"] = self.tmp.name
+        os.environ["XDG_STATE_HOME"] = str(Path(self.tmp.name) / "state")
         QtCore, QtGui, QtWidgets = load_qt()
         self.QtWidgets = QtWidgets
         self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -29,6 +31,10 @@ class GuiTests(unittest.TestCase):
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:
             os.environ["XDG_CONFIG_HOME"] = self._old
+        if self._old_state is None:
+            os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            os.environ["XDG_STATE_HOME"] = self._old_state
         self.tmp.cleanup()
 
     def test_window_starts_off_and_settings_use_the_spec_labels(self):
@@ -52,14 +58,18 @@ class GuiTests(unittest.TestCase):
         self.assertIsNotNone(check)
         self.assertEqual(check.text(), "Open the Tor check page when the switch changes")
         self.assertTrue(check.isChecked())
-        self.assertEqual(
-            settings.findChild(self.QtWidgets.QCheckBox, "lanDirect").text(),
-            "Keep the local network off Tor",
-        )
-        self.assertEqual(
-            settings.findChild(self.QtWidgets.QCheckBox, "rejectNonTor").text(),
-            "Block traffic that cannot use Tor",
-        )
+        ignore = settings.findChild(self.QtWidgets.QLineEdit, "ignoreHosts")
+        self.assertIsNotNone(ignore)
+        self.assertIn("localhost", ignore.text())
+        note = settings.findChild(self.QtWidgets.QLabel, "proxyNote")
+        self.assertIsNotNone(note)
+        self.assertIn("Transmission", note.text())
+        self.assertIn("qBittorrent", note.text())
+        self.assertIn("uTorrent", note.text())
+        reset = settings.findChild(self.QtWidgets.QPushButton, "resetNetworkButton")
+        self.assertEqual(reset.text(), "Reset network settings to defaults")
+        self.assertIsNone(settings.findChild(self.QtWidgets.QCheckBox, "lanDirect"))
+        self.assertIsNone(settings.findChild(self.QtWidgets.QCheckBox, "rejectNonTor"))
         new_route = settings.findChild(self.QtWidgets.QPushButton, "newRouteButton")
         self.assertEqual(new_route.text(), "New route")
         route = route_cls(None)

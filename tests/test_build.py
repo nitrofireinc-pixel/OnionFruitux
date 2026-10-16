@@ -1,14 +1,12 @@
-"""Torrc, firewall text, and nft -c. Nothing here is installed."""
+"""Torrc text. Nothing here is installed or applied to the network."""
 
 from __future__ import annotations
 
-import getpass
 import subprocess
 import unittest
 from pathlib import Path
 
-from onionfruitux.config import Config, NetworkSettings, Route
-from onionfruitux.firewall import render_firewall
+from onionfruitux.config import Config, Route
 from onionfruitux.torrc import render_torrc
 
 
@@ -25,15 +23,16 @@ class TorrcTests(unittest.TestCase):
         self.assertIn("ExitNodes {us}", text)
         self.assertIn("StrictNodes 1", text)
         self.assertNotIn("UseBridges", text)
-        self.assertIn("TransPort 127.0.0.1:9140", text)
-        self.assertIn("DNSPort 127.0.0.1:9153", text)
+        self.assertNotIn("TransPort", text)
+        self.assertNotIn("DNSPort", text)
+        self.assertNotIn("VirtualAddrNetwork", text)
+        self.assertNotIn("AutomapHostsOnResolve", text)
         self.assertIn("SocksPort 127.0.0.1:9155", text)
         self.assertIn("ControlPort 127.0.0.1:9156", text)
         self.assertNotIn(":9040", text)
         self.assertNotIn(":5353", text)
         self.assertNotIn(":9050", text)
         self.assertNotIn(":9051", text)
-        self.assertIn("AutomapHostsOnResolve 1", text)
         self.assertIn("User onionfruitux", text)
 
     def test_bridge_replaces_entry_country(self):
@@ -72,85 +71,13 @@ class TorrcTests(unittest.TestCase):
         self.assertIn("FascistFirewall 1", text)
         self.assertIn("ReachableAddresses *:80,*:443", text)
 
-    def test_onion_mapping_without_a_route(self):
+    def test_socks_only_without_a_route(self):
         text = render_torrc(Config())
-        self.assertIn("VirtualAddrNetworkIPv4 10.192.0.0/10", text)
-        self.assertIn("VirtualAddrNetworkIPv6 [FC00:192::]/32", text)
+        self.assertIn("SocksPort 127.0.0.1:9155", text)
+        self.assertNotIn("TransPort", text)
+        self.assertNotIn("DNSPort", text)
         self.assertNotIn("EntryNodes", text)
         self.assertNotIn("UseBridges", text)
-
-
-class FirewallTests(unittest.TestCase):
-    def test_dns_is_before_the_local_network(self):
-        text = render_firewall(NetworkSettings())
-        self.assertLess(text.index("udp dport 53 redirect"), text.index("192.168.0.0/16"))
-        self.assertLess(text.index("tcp dport 53 redirect"), text.index('oifname "lo" return'))
-        self.assertIn("table inet onionfruitux {", text)
-        self.assertIn("meta skuid onionfruitux return", text)
-        self.assertIn("udp dport { 67, 68, 546, 547 } return", text)
-        self.assertIn("udp dport 53 redirect to :9153", text)
-        self.assertIn("tcp dport 53 redirect to :9153", text)
-        self.assertIn("meta l4proto tcp redirect to :9140", text)
-        self.assertLess(
-            text.index("10.192.0.0/10 meta l4proto tcp redirect"),
-            text.index("192.168.0.0/16"),
-        )
-        self.assertLess(text.index("ct status dnat accept"), text.index("meta l4proto udp reject"))
-        self.assertNotIn("10.0.0.0/8", text)
-        self.assertNotIn(":9040", text)
-        self.assertNotIn(":5353", text)
-        self.assertIn("meta l4proto udp reject", text)
-        self.assertTrue(text.strip().endswith("}"))
-
-    def test_other_udp_is_blocked_even_when_the_reject_check_is_off(self):
-        text = render_firewall(NetworkSettings(reject_non_tor=False))
-        self.assertIn("meta l4proto udp reject", text)
-        self.assertNotIn("\n        reject\n", text)
-
-    def test_reject_check_and_lan_through_tor(self):
-        text = render_firewall(NetworkSettings(lan_direct=False, reject_non_tor=True))
-        self.assertNotIn("192.168.0.0/16", text)
-        self.assertIn("udp dport 53 redirect", text)
-        self.assertIn("\n        reject\n", text)
-        self.assertIn("udp dport { 67, 68, 546, 547 } accept", text)
-
-    def test_only_one_table(self):
-        text = render_firewall(NetworkSettings())
-        self.assertEqual(text.count("table "), 1)
-        self.assertNotIn("flush ruleset", text)
-
-    def test_nft_check_does_not_install_the_table(self):
-        nft = subprocess.run(["nft", "--version"], capture_output=True, text=True)
-        if nft.returncode != 0:
-            self.skipTest("nft is not installed")
-        before = subprocess.run(
-            ["sudo", "-n", "nft", "list", "tables"],
-            capture_output=True,
-            text=True,
-        )
-        user = getpass.getuser()
-        variants = [
-            NetworkSettings(),
-            NetworkSettings(lan_direct=False),
-            NetworkSettings(reject_non_tor=False),
-            NetworkSettings(lan_direct=False, reject_non_tor=False),
-        ]
-        for network in variants:
-            rules = render_firewall(network, tor_user=user)
-            result = subprocess.run(
-                ["sudo", "-n", "nft", "-c", "-f", "-"],
-                input=rules,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stderr)
-        after = subprocess.run(
-            ["sudo", "-n", "nft", "list", "tables"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(before.stdout, after.stdout)
-        self.assertNotIn("onionfruitux", after.stdout)
 
 
 class ManPageTests(unittest.TestCase):

@@ -58,34 +58,38 @@ class CliTests(unittest.TestCase):
         out = StringIO()
         with patch("onionfruitux.system.connect", side_effect=AssertionError("connect")), \
              patch("onionfruitux.system.disconnect", side_effect=AssertionError("disconnect")), \
-             patch("onionfruitux.system.apply_ruleset", side_effect=AssertionError("apply")), \
              redirect_stdout(out):
             code = cli.main(["plan"])
         self.assertEqual(code, 0)
         text = out.getvalue()
         self.assertIn("### torrc", text)
-        self.assertIn("### nftables", text)
-        self.assertIn("table inet onionfruitux", text)
+        self.assertIn("### system proxy", text)
+        self.assertNotIn("### nftables", text)
+        self.assertNotIn("table inet onionfruitux", text)
         self.assertIn("EntryNodes {de}", text)
         self.assertIn("changes nothing", text)
+        self.assertIn("does not change iptables", text)
 
-    def test_check_page_opens_after_the_firewall_change(self):
+    def test_check_page_opens_after_the_proxy_is_set(self):
         order = []
         cfg = Config(network=NetworkSettings(open_check_page=True))
         with patch.object(cli, "load_config", return_value=cfg), \
              patch.object(cli, "validate_for_connect", return_value=[]), \
-             patch.object(cli, "escalate", side_effect=lambda *a, **k: order.append("firewall") or 0), \
+             patch.object(cli, "escalate", side_effect=lambda *a, **k: order.append("tor") or 0), \
+             patch.object(cli, "_enable_user_proxy", side_effect=lambda *a, **k: order.append("proxy")), \
              patch.object(cli, "open_check_page", side_effect=lambda: order.append("page")), \
              patch.object(cli.os, "geteuid", return_value=1000), \
              patch.object(cli.system_mod, "connect", side_effect=AssertionError("connect")):
             cli.connect_command()
-        self.assertEqual(order, ["firewall", "page"])
+        self.assertEqual(order, ["tor", "proxy", "page"])
 
     def test_check_page_can_be_turned_off(self):
         cfg = Config(network=NetworkSettings(open_check_page=False))
         with patch.object(cli, "load_config", return_value=cfg), \
              patch.object(cli, "validate_for_connect", return_value=[]), \
              patch.object(cli, "escalate", return_value=0), \
+             patch.object(cli, "_enable_user_proxy"), \
+             patch.object(cli, "disable_session"), \
              patch.object(cli, "open_check_page") as page, \
              patch.object(cli.os, "geteuid", return_value=1000):
             cli.connect_command()
@@ -96,12 +100,13 @@ class CliTests(unittest.TestCase):
         order = []
         cfg = Config(network=NetworkSettings(open_check_page=True))
         with patch.object(cli, "load_config", return_value=cfg), \
-             patch.object(cli, "escalate", side_effect=lambda *a, **k: order.append("firewall") or 0), \
+             patch.object(cli, "escalate", side_effect=lambda *a, **k: order.append("tor") or 0), \
+             patch.object(cli, "disable_session", side_effect=lambda: order.append("proxy")), \
              patch.object(cli, "open_check_page", side_effect=lambda: order.append("page")), \
              patch.object(cli.os, "geteuid", return_value=1000), \
              patch.object(cli.system_mod, "disconnect", side_effect=AssertionError("disconnect")):
             cli.disconnect_command()
-        self.assertEqual(order, ["firewall", "page"])
+        self.assertEqual(order, ["tor", "proxy", "page"])
 
     def test_privileged_child_does_not_open_the_page_itself(self):
         cfg = Config(network=NetworkSettings(open_check_page=True))
@@ -130,6 +135,7 @@ class CliTests(unittest.TestCase):
         with patch.object(cli, "load_config", return_value=cfg), \
              patch.object(cli, "validate_for_connect", return_value=[]), \
              patch.object(cli, "escalate", return_value=0), \
+             patch.object(cli, "_enable_user_proxy"), \
              patch.object(cli, "open_check_page") as page, \
              patch.object(cli.os, "geteuid", return_value=1000):
             cli.connect_command(open_page=False)
@@ -162,7 +168,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(cli.main(["panic-off"]), 0)
         page.assert_not_called()
         self.assertEqual(escalate.call_args.args[0], ["panic-off"])
-        self.assertIn("firewall table has been removed", out.getvalue())
+        self.assertIn("leftover firewall table was removed", out.getvalue())
 
     def test_follow_reports_progress_without_waiting_on_a_pipe(self):
         path = Path(self.tmp.name) / "progress"
@@ -217,7 +223,7 @@ class CliTests(unittest.TestCase):
                 timeout=0.3,
             )
         self.assertTrue(proc.terminated)
-        self.assertIn("rolled back", str(caught.exception))
+        self.assertIn("put back", str(caught.exception))
 
     def test_escalate_does_not_capture_pkexec_pipes(self):
         with patch.object(cli.shutil, "which", return_value="/usr/bin/pkexec"), \
@@ -284,7 +290,7 @@ class CliTests(unittest.TestCase):
             code = cli.escalate(["disconnect"], error_file=str(error), timeout=5)
         self.assertEqual(code, 127)
         message = cli._escalate_failure(str(error))
-        self.assertIn("Could not get permission to change the firewall.", message)
+        self.assertIn("Could not get permission to change OnionFruitux.", message)
         self.assertIn("pkexec exited 127.", message)
         self.assertIn("Not authorized", message)
         recorded = log.read_text(encoding="utf-8")
@@ -366,5 +372,6 @@ class CliTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("table inet onionfruitux", result.stdout)
-        self.assertIn("TransPort", result.stdout)
+        self.assertIn("### system proxy", result.stdout)
+        self.assertNotIn("TransPort", result.stdout)
+        self.assertNotIn("table inet onionfruitux", result.stdout)

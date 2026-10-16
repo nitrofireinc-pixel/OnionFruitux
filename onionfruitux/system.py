@@ -1,8 +1,11 @@
-"""Privileged Tor and firewall changes.
+"""Privileged Tor process.
 
-connect() and disconnect() are the switch. They are not called by plan,
-doctor, or the tests. Turning the switch off deletes only the onionfruitux
-table and stops the Tor process this program started.
+connect() and disconnect() start and stop OnionFruitux's Tor. They do not
+change the system proxy: that is the desktop user's session. They do not
+install firewall rules or rewrite resolv.conf. Turning the switch off deletes
+a leftover onionfruitux nftables table from an older version, restores a DNS
+snapshot if that older version saved one, and stops the Tor process this
+program started.
 """
 
 from __future__ import annotations
@@ -19,8 +22,7 @@ from pathlib import Path
 
 from onionfruitux.config import Config
 from onionfruitux.errors import OnionError
-from onionfruitux.firewall import render_firewall
-from onionfruitux.dns import engage_dns, restore_dns
+from onionfruitux.dns import restore_saved_dns
 from onionfruitux.listeners import our_port_conflicts
 from onionfruitux.paths import (
     BOOT_PATH,
@@ -40,8 +42,7 @@ from onionfruitux.paths import (
 )
 from onionfruitux.torrc import render_torrc
 
-# The firewall is installed only after Tor reports Bootstrapped 100%.
-# These limits are what make a hung Tor or nftables command fail cleanly.
+# These limits are what make a hung Tor command fail cleanly.
 PORT_TIMEOUT = 25
 BOOTSTRAP_TIMEOUT = 90
 NFT_TIMEOUT = 15
@@ -51,7 +52,7 @@ _helper_pid: int | None = None
 
 
 UNIT_TEXT = """[Unit]
-Description=OnionFruitux whole-computer Tor routing
+Description=OnionFruitux Tor process
 Documentation=man:onionfruitux(1)
 After=network-online.target
 Wants=network-online.target
@@ -68,11 +69,11 @@ WantedBy=multi-user.target
 
 
 def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> None:
-    """Start Tor, wait until it is fully connected, then install the firewall.
+    """Start Tor and wait until it is fully connected.
 
-    The nftables table is not installed until Tor's log says Bootstrapped 100%.
-    A timeout, a dead Tor, or the desktop process disappearing removes the
-    table and stops only OnionFruitux's Tor.
+    This does not change the proxy, DNS, or firewall. The desktop session
+    sets the system proxy after this returns. A timeout or a dead Tor stops
+    only OnionFruitux's Tor.
     """
     if os.geteuid() != 0:
         raise OnionError("connecting needs an administrator password")
@@ -83,8 +84,6 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
             progress(message)
 
     _prepare_runtime()
-    rules = render_firewall(cfg.network)
-    _assert_only_our_table(rules)
     _install_torrc(cfg)
     # Replace a previous OnionFruitux Tor before the new one binds the ports.
     # A leftover process from an earlier attempt is stopped here, after the
@@ -95,7 +94,7 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
     if leftover:
         raise OnionError(
             "OnionFruitux's previous Tor is still running "
-            f"(pid {leftover[0]}). It was not replaced, and the firewall was not changed."
+            f"(pid {leftover[0]}). It was not replaced, and the system proxy was not changed."
         )
     # Checked again as root, after our previous Tor has been stopped, so the
     # message can name the other process. Never connect to TransPort to see
@@ -125,13 +124,9 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
         if percent != 100:
             raise OnionError(
                 "Tor did not finish connecting before the time limit. "
-                "The firewall was not changed."
+                "The system proxy was not changed."
             )
         abort()
-        report("Applying the firewall…")
-        apply_ruleset(rules)
-        report("Sending name lookup through Tor…")
-        engage_dns()
         _write_state(True, proc.pid, cfg.current_route().name)
         report("Connected.")
     except Exception:
@@ -140,26 +135,27 @@ def connect(cfg: Config, progress=None, heartbeat_file: str | None = None) -> No
 
 
 def disconnect() -> None:
-    """Delete the onionfruitux table, restore DNS, then stop only our Tor process."""
+    """Stop our Tor, drop a leftover firewall table, and restore saved DNS."""
     if os.geteuid() != 0:
         raise OnionError("disconnecting needs an administrator password")
     delete_table()
-    restore_dns()
+    restore_saved_dns()
     stop_tor()
     _write_state(False, None, "")
     _flush_dns_cache()
 
 
 def panic_off() -> None:
-    """Remove OnionFruitux's firewall and Tor even when state says the switch is off.
+    """Stop OnionFruitux's Tor even when state says the switch is off.
 
-    Safe to run twice. Does not open a browser. The onionfruitux table is
-    removed and systemd-resolved, if it was pointed at Tor, is restored.
+    Safe to run twice. Does not open a browser. A leftover onionfruitux
+    nftables table is deleted. A DNS snapshot from an older version is
+    restored. VPN connections are not changed.
     """
     if os.geteuid() != 0:
-        raise OnionError("clearing the firewall needs an administrator password")
+        raise OnionError("clearing OnionFruitux needs an administrator password")
     delete_table()
-    restore_dns()
+    restore_saved_dns()
     stop_tor()
     _write_state(False, None, "")
     _flush_dns_cache()
@@ -174,39 +170,10 @@ def new_circuit() -> None:
     _signal_newnym()
 
 
-def apply_ruleset(rules: str) -> None:
-    """Replace the onionfruitux table with rules OnionFruitux generated."""
-    global _helper_pid
-    _assert_only_our_table(rules)
-    delete_table()
-    try:
-        proc = subprocess.Popen(
-            ["nft", "-f", "-"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise OnionError("nftables is not installed") from exc
-    _helper_pid = proc.pid
-    try:
-        try:
-            stdout, stderr = proc.communicate(rules, timeout=NFT_TIMEOUT)
-        except subprocess.TimeoutExpired as exc:
-            proc.kill()
-            proc.communicate()
-            raise OnionError(
-                "nftables did not finish; the firewall was not left in place"
-            ) from exc
-    finally:
-        _helper_pid = None
-    if proc.returncode != 0:
-        detail = (stderr or stdout or "nft failed").strip()
-        raise OnionError(detail)
-
-
 def delete_table() -> None:
+    """Delete only a leftover onionfruitux table. Never installs rules."""
+    if not shutil.which("nft"):
+        return
     try:
         subprocess.run(
             ["nft", "delete", "table", "inet", TABLE_NAME],
@@ -345,7 +312,7 @@ def _truncate_log(path: Path, mode: int, own_by_tor: bool) -> None:
 def _rollback_network() -> None:
     _stop_helper()
     delete_table()
-    restore_dns()
+    restore_saved_dns()
     stop_tor()
     _write_state(False, None, "")
 
@@ -361,7 +328,7 @@ def _stop_helper() -> None:
 
 
 def _arm_parent_death() -> None:
-    """If pkexec's parent disappears, roll the firewall back and exit.
+    """If pkexec's parent disappears, stop Tor and exit.
 
     The desktop process is not this process's parent. A supervisor between
     them sets the same parent-death signal on pkexec, so closing or killing
@@ -435,16 +402,6 @@ def _prepare_runtime() -> None:
     os.chown(LOG_PATH, user.pw_uid, user.pw_gid)
     os.chmod(LOG_PATH, 0o640)
     PID_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _assert_only_our_table(rules: str) -> None:
-    import re
-
-    names = re.findall(r"(?m)^table\s+\S+\s+(\S+)", rules)
-    if names != [TABLE_NAME]:
-        raise OnionError("refusing to load a firewall that is not the onionfruitux table")
-    if "flush ruleset" in rules:
-        raise OnionError("refusing to flush the firewall")
 
 
 def _write_state(running: bool, pid: int | None, route: str) -> None:
@@ -536,15 +493,15 @@ def _wait_dead(pid: int) -> bool:
     return not _alive(pid)
 
 
-# A plain TCP connection to TransPort makes Tor 0.4.9 segfault. Readiness is
-# the notice log line Tor writes when that listener is open.
-_LISTENER_MARK = "Opened Transparent pf/netfilter listener"
+# Readiness is Tor's own log line. This does not connect to a port.
+_LISTENER_MARK = "Opened Socks listener"
 
 
 def _wait_for_listeners(timeout: float, abort=None) -> bool:
-    """Wait until Tor's log says the transparent listener is open.
+    """Wait until Tor's log says the SOCKS listener is open.
 
-    This never connects to TransPort or DNSPort.
+    This never connects to a port. A connection to Tor's old TransPort
+    crashed Tor 0.4.9, so readiness stays a log read.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -665,7 +622,7 @@ def _listeners_timeout_message(proc) -> str:
     detail = _tor_output_tail()
     message = (
         "Tor did not open its listeners before the time limit. "
-        "The firewall was not changed."
+        "The system proxy was not changed."
     )
     if detail:
         return message + "\n" + detail
@@ -675,7 +632,7 @@ def _listeners_timeout_message(proc) -> str:
 def _tor_died_message(proc, phase: str) -> str:
     code = getattr(proc, "returncode", None)
     message = (
-        f"Tor stopped while {phase} (exit {code}). The firewall was not changed."
+        f"Tor stopped while {phase} (exit {code}). The system proxy was not changed."
     )
     detail = _tor_output_tail()
     if detail:

@@ -22,19 +22,25 @@ from onionfruitux.config import (
     use_route,
 )
 from onionfruitux.doctor import collect_checks, doctor_status, format_report
-from onionfruitux.errors import OnionError
-from onionfruitux.firewall import render_firewall
-from onionfruitux.paths import BOOT_PATH, config_dir, config_path, error_path
+from onionfruitux.errors import DirectUnreachable, OnionError
+from onionfruitux.paths import BOOT_PATH, SOCKS_PORT, config_dir, config_path, error_path
+from onionfruitux.proxy import (
+    disable_session,
+    enable_session,
+    parse_ignore_hosts,
+    proxy_plan,
+    reset_proxy_defaults,
+)
 from onionfruitux.preflight import validate_for_connect
 from onionfruitux.torrc import render_torrc
 
 # Long enough for the password dialog plus Tor's own bootstrap limit.
-# The child stops itself sooner when Tor or nftables does not finish.
+# The child stops itself sooner when Tor does not finish.
 PRIVILEGED_TIMEOUT = 300
 
 # Runs as its own one-thread process so it can ask the kernel to signal it
 # when the desktop app exits. pkexec is its child and gets the same signal,
-# which is what makes a force-quit roll the firewall back.
+# which is what makes a force-quit stop Tor.
 _PKEXEC_SUPERVISOR = r"""
 import ctypes
 import os
@@ -107,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="onionfruitux",
-        description="Send this computer's internet through Tor.",
+        description="Send apps that use the system proxy through Tor.",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -116,12 +122,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("disconnect", help="turn the switch off")
     sub.add_parser(
         "panic-off",
-        help="remove the firewall table and OnionFruitux's Tor immediately",
+        help="stop OnionFruitux's Tor and delete a leftover firewall table",
+    )
+    sub.add_parser(
+        "reset-network",
+        help="set the system proxy mode to none",
     )
     sub.add_parser("status", help="show whether the switch is on")
     sub.add_parser("new-circuit", help="ask Tor for a fresh path")
     sub.add_parser("doctor", help="check this machine without changing the network")
-    sub.add_parser("plan", help="print the torrc and firewall rules, and change nothing")
+    sub.add_parser("plan", help="print the torrc and proxy settings, and change nothing")
 
     route = sub.add_parser("route", help="named routes")
     route_sub = route.add_subparsers(dest="route_command", required=True)
@@ -213,19 +223,31 @@ def connect_command(
         )
         if code != 0:
             raise OnionError(_escalate_failure(error_file))
-        # The page is opened by this desktop process after pkexec returns.
-        # The root child never opens a browser.
+        # The proxy is set by this desktop process after pkexec returns.
+        # The root child starts Tor and never changes the user's proxy.
+        try:
+            _enable_user_proxy(cfg, progress=progress)
+        except Exception as exc:
+            escalate(
+                ["disconnect", "--config", str(_user_config(config))],
+                error_file=error_file,
+            )
+            try:
+                disable_session()
+            except DirectUnreachable as direct:
+                raise DirectUnreachable(
+                    "Turning Tor on failed, and the computer still cannot reach "
+                    "the internet directly.\n" + str(exc) + "\n" + str(direct)
+                ) from exc
+            raise
         if _wants_check_page(cfg, open_page):
             open_check_page()
         return
     system_mod.connect(cfg, progress=reporter, heartbeat_file=heartbeat_file)
-    if (
-        not system
-        and not privileged
-        and os.geteuid() != 0
-        and _wants_check_page(cfg, open_page)
-    ):
-        open_check_page()
+
+
+def _enable_user_proxy(cfg: Config, progress=None) -> None:
+    enable_session(parse_ignore_hosts(cfg.network.ignore_hosts), progress=progress)
 
 
 def disconnect_command(
@@ -234,26 +256,44 @@ def disconnect_command(
     system: bool = False,
     config: str | None = None,
     error_file: str | None = None,
+    open_page: bool | None = None,
 ) -> None:
     # System disconnect must work even when boot settings were not saved.
     # The check page is a desktop action, so the boot service never opens it.
-    open_page = False
-    if not system:
+    # The root child stops Tor. The desktop user restores the proxy snapshot.
+    show_page = False
+    if not system and open_page is None:
         cfg = load_config(_user_config(config))
-        open_page = cfg.network.open_check_page
+        show_page = cfg.network.open_check_page
+    elif open_page:
+        show_page = True
     if _needs_admin(privileged, system):
         code = escalate(
             ["disconnect", "--config", str(_user_config(config))],
             error_file=error_file,
         )
-        if code != 0:
-            raise OnionError(_escalate_failure(error_file))
-        if open_page:
+        admin_error = _escalate_failure(error_file) if code != 0 else ""
+        try:
+            disable_session()
+        except DirectUnreachable as exc:
+            if admin_error:
+                raise DirectUnreachable(admin_error + "\n" + str(exc)) from exc
+            raise
+        if admin_error:
+            raise OnionError(admin_error)
+        if show_page:
             open_check_page()
         return
     system_mod.disconnect()
-    if open_page and not privileged and os.geteuid() != 0:
+    if not system and not privileged and os.geteuid() != 0:
+        disable_session()
+    if show_page and not privileged and os.geteuid() != 0:
         open_check_page()
+
+
+def reset_network_command() -> None:
+    """Set the system proxy mode to none. Does not change DNS or VPN connections."""
+    reset_proxy_defaults()
 
 
 def panic_off_command(
@@ -262,7 +302,7 @@ def panic_off_command(
     system: bool = False,
     error_file: str | None = None,
 ) -> None:
-    """Clear the firewall without opening a browser."""
+    """Stop Tor and delete a leftover firewall table. Does not open a browser."""
     if _needs_admin(privileged, system):
         code = escalate(["panic-off"], error_file=error_file)
         if code != 0:
@@ -299,8 +339,7 @@ def plan_command(config: str | None = None) -> str:
             "### torrc",
             render_torrc(cfg, route).rstrip(),
             "",
-            "### nftables",
-            render_firewall(cfg.network).rstrip(),
+            proxy_plan(SOCKS_PORT, cfg.network.ignore_hosts),
             "",
         ]
     )
@@ -375,7 +414,13 @@ def _dispatch(args: argparse.Namespace) -> None:
             system=args.system,
             error_file=args.error_file,
         )
-        print("OnionFruitux is off. The firewall table has been removed.")
+        print(
+            "OnionFruitux is off. A leftover firewall table was removed if it was still installed."
+        )
+        return
+    if args.command == "reset-network":
+        reset_network_command()
+        print("System proxy mode is none.")
         return
     if args.command == "status":
         print(status_command(), end="")
@@ -538,7 +583,7 @@ def _interpreter() -> str:
     for path in candidates:
         if _is_python_binary(path):
             return path
-    raise OnionError("Could not find Python to ask for permission to change the firewall.")
+    raise OnionError("Could not find Python to ask for permission to start Tor.")
 
 
 def _pkexec_stderr_path(error_file: str) -> Path:
@@ -643,7 +688,7 @@ def _follow_privileged(
                     pass
             raise OnionError(
                 "That step took too long and was cancelled. "
-                "If the switch was turning on, the firewall was rolled back."
+                "If the switch was turning on, Tor was stopped and the proxy was put back."
             )
         time.sleep(0.2)
 
@@ -704,7 +749,7 @@ def _escalate_failure(error_file: str | None) -> str:
     if helper:
         parts.append(helper)
     else:
-        parts.append("Could not get permission to change the firewall.")
+        parts.append("Could not get permission to change OnionFruitux.")
     if code is not None:
         parts.append(f"pkexec exited {code}.")
     if stderr and stderr not in helper:

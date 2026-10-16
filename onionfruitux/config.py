@@ -83,21 +83,30 @@ class Route:
         )
 
 
+DEFAULT_IGNORE_HOSTS = "localhost, 127.0.0.0/8, ::1"
+
+
+def parse_ignore_hosts(value: str) -> list[str]:
+    """Hosts and networks that stay on the normal connection."""
+    from onionfruitux.proxy import parse_ignore_hosts as _parse
+
+    return _parse(value)
+
+
 @dataclass
 class NetworkSettings:
-    lan_direct: bool = True
-    reject_non_tor: bool = True
     relay_ports: str = ""
     open_check_page: bool = True
+    ignore_hosts: str = DEFAULT_IGNORE_HOSTS
 
     def cleaned(self) -> NetworkSettings:
         ports = parse_relay_ports(self.relay_ports)
         shown = ", ".join(str(port) for port in ports)
+        hosts = ", ".join(parse_ignore_hosts(self.ignore_hosts))
         return NetworkSettings(
-            lan_direct=bool(self.lan_direct),
-            reject_non_tor=bool(self.reject_non_tor),
             relay_ports=shown,
             open_check_page=bool(self.open_check_page),
+            ignore_hosts=hosts,
         )
 
 
@@ -140,10 +149,9 @@ def load_config(path: Path | None = None) -> Config:
         raise OnionError(f"{target}: network settings are not an object")
     try:
         network = NetworkSettings(
-            lan_direct=bool(net_raw.get("lan_direct", True)),
-            reject_non_tor=bool(net_raw.get("reject_non_tor", True)),
             relay_ports=str(net_raw.get("relay_ports") or ""),
             open_check_page=bool(net_raw.get("open_check_page", True)),
+            ignore_hosts=str(net_raw.get("ignore_hosts", DEFAULT_IGNORE_HOSTS)),
         ).cleaned()
     except ValueError as exc:
         raise OnionError(f"{target}: {exc}") from exc

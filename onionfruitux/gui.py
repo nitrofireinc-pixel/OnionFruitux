@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import sys
 
 from onionfruitux.checkpage import open_check_page
-from onionfruitux.cli import new_circuit_command
+from onionfruitux.cli import disconnect_command, new_circuit_command
 from onionfruitux.switchjob import SwitchJob
 from onionfruitux.config import (
     BRIDGE_TYPES,
@@ -18,10 +20,18 @@ from onionfruitux.config import (
     use_route,
 )
 from onionfruitux.countries import country_choices
-from onionfruitux.errors import OnionError
+from onionfruitux.errors import RESET_MARKER, DirectUnreachable, OnionError
 from onionfruitux.icons import install_app_icon, load_onion_icon
+from onionfruitux.proxy import quit_restore, reset_proxy_defaults, snapshot_path, switch_is_on
 from onionfruitux.qtutil import load_qt
-from onionfruitux.system import read_status
+
+_PROXY_NOTE = (
+    "OnionFruitux sets the system SOCKS proxy. Firefox, Chrome, and other "
+    "GNOME and KDE apps that follow the system proxy send their traffic through "
+    "Tor. Transmission, qBittorrent, uTorrent, and other apps that ignore the "
+    "system proxy stay on the normal connection. Hosts in the ignore list stay "
+    "direct too. OnionFruitux does not change the firewall, DNS, or VPN connections."
+)
 
 # Off is gray, connecting is orange, and fully connected is green.
 PHASE_COLOR = {
@@ -59,9 +69,54 @@ def run_window() -> int:
     install_app_icon(app, QtGui)
     app.setStyle("Fusion")
     app.setStyleSheet(_STYLE)
+    _install_quit_restore()
+    app.aboutToQuit.connect(_silent_quit_restore)
     window = MainWindow()
     window.show()
     return app.exec()
+
+
+def present_switch_error(parent, message: str) -> None:
+    """Show a switch error. A failed direct check offers the reset button."""
+    _QtCore, _QtGui, QtWidgets = load_qt()
+    if message.startswith(RESET_MARKER):
+        body = message.split("\n", 1)[1] if "\n" in message else message
+        box = QtWidgets.QMessageBox(parent)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle("OnionFruitux")
+        box.setText("The network is still not reaching the internet directly.")
+        box.setInformativeText(body)
+        reset = box.addButton(
+            "Reset network settings to defaults",
+            QtWidgets.QMessageBox.ButtonRole.ActionRole,
+        )
+        box.addButton(QtWidgets.QMessageBox.StandardButton.Ok)
+        box.exec()
+        if box.clickedButton() is reset:
+            try:
+                reset_proxy_defaults()
+            except OnionError as exc:
+                QtWidgets.QMessageBox.warning(parent, "OnionFruitux", str(exc))
+        return
+    QtWidgets.QMessageBox.warning(parent, "OnionFruitux", message)
+
+
+def _install_quit_restore() -> None:
+    def _on_signal(signum, _frame):
+        try:
+            quit_restore()
+        finally:
+            os._exit(128 + int(signum))
+
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGHUP, _on_signal)
+
+
+def _silent_quit_restore() -> None:
+    try:
+        quit_restore()
+    except Exception:
+        return
 
 
 def create_main_window():
@@ -243,17 +298,14 @@ def create_main_window():
 
         def _network_tab(self, widgets):
             page = widgets.QWidget()
-            self.lan_direct = widgets.QCheckBox("Keep the local network off Tor")
-            self.lan_direct.setObjectName("lanDirect")
-            self.lan_direct.setChecked(self.cfg.network.lan_direct)
-            self.reject_non_tor = widgets.QCheckBox("Block traffic that cannot use Tor")
-            self.reject_non_tor.setObjectName("rejectNonTor")
-            self.reject_non_tor.setChecked(self.cfg.network.reject_non_tor)
             self.check_page = widgets.QCheckBox(
                 "Open the Tor check page when the switch changes"
             )
             self.check_page.setObjectName("openCheckPage")
             self.check_page.setChecked(self.cfg.network.open_check_page)
+            self.ignore_hosts = widgets.QLineEdit(self.cfg.network.ignore_hosts)
+            self.ignore_hosts.setObjectName("ignoreHosts")
+            self.ignore_hosts.setPlaceholderText("localhost, 127.0.0.0/8, ::1")
             self.relay_ports = widgets.QLineEdit(self.cfg.network.relay_ports)
             self.relay_ports.setObjectName("relayPorts")
             self.relay_ports.setPlaceholderText("80, 443")
@@ -262,12 +314,19 @@ def create_main_window():
             )
             hint.setObjectName("muted")
             hint.setWordWrap(True)
+            note = widgets.QLabel(_PROXY_NOTE)
+            note.setObjectName("proxyNote")
+            note.setWordWrap(True)
+            reset = widgets.QPushButton("Reset network settings to defaults")
+            reset.setObjectName("resetNetworkButton")
+            reset.clicked.connect(self._reset_network)
             form = widgets.QFormLayout(page)
-            form.addRow(self.lan_direct)
-            form.addRow(self.reject_non_tor)
             form.addRow(self.check_page)
+            form.addRow("Ignore hosts", self.ignore_hosts)
             form.addRow("Relay ports", self.relay_ports)
             form.addRow(hint)
+            form.addRow(note)
+            form.addRow(reset)
             return page
 
         def _fill_routes(self):
@@ -347,9 +406,8 @@ def create_main_window():
         def _save(self):
             self._bridge_drafts[self._current_bridge] = self.bridge_text.toPlainText()
             self.cfg.bridge_lines = dict(self._bridge_drafts)
-            self.cfg.network.lan_direct = self.lan_direct.isChecked()
-            self.cfg.network.reject_non_tor = self.reject_non_tor.isChecked()
             self.cfg.network.open_check_page = self.check_page.isChecked()
+            self.cfg.network.ignore_hosts = self.ignore_hosts.text()
             self.cfg.network.relay_ports = self.relay_ports.text()
             try:
                 self.cfg.network = self.cfg.network.cleaned()
@@ -358,6 +416,18 @@ def create_main_window():
                 QtWidgets.QMessageBox.warning(self, "OnionFruitux", str(exc))
                 return
             self.accept()
+
+        def _reset_network(self):
+            try:
+                reset_proxy_defaults()
+            except OnionError as exc:
+                QtWidgets.QMessageBox.warning(self, "OnionFruitux", str(exc))
+                return
+            QtWidgets.QMessageBox.information(
+                self,
+                "OnionFruitux",
+                "System proxy mode is none. DNS and VPN connections were not changed.",
+            )
 
     class Window(QtWidgets.QWidget):
         def __init__(self):
@@ -368,12 +438,15 @@ def create_main_window():
             self._busy = False
             self._turning_on = False
             self._job = None
+            self.restore_on_close = True
             self.cfg = load_config()
             self.setWindowIcon(load_onion_icon(QtGui))
 
             title = QtWidgets.QLabel("OnionFruitux")
             title.setObjectName("title")
-            subtitle = QtWidgets.QLabel("Send this computer's internet through Tor.")
+            subtitle = QtWidgets.QLabel(
+                "Send apps that use the system proxy through Tor."
+            )
             subtitle.setObjectName("muted")
             subtitle.setWordWrap(True)
 
@@ -428,13 +501,13 @@ def create_main_window():
             self._timer.timeout.connect(self.refresh)
             self._timer.start()
             self.refresh()
+            self._offer_saved_state()
 
         def refresh(self):
             if self._busy:
                 return
             self.cfg = load_config()
-            state = read_status()
-            running = bool(state["running"])
+            running = switch_is_on()
             self._busy = True
             self.switch.phase = "on" if running else "off"
             self.switch.setChecked(running)
@@ -443,14 +516,21 @@ def create_main_window():
             self._paint_status(running)
 
         def closeEvent(self, event):  # noqa: N802
-            # Do not wait for the worker. Exiting the process is what tells
-            # the privileged child to roll the firewall back.
+            # Quitting the app puts the saved proxy back. A window opened from
+            # the tray does not, because the tray is still running.
+            if self.restore_on_close:
+                try:
+                    quit_restore()
+                except DirectUnreachable as exc:
+                    present_switch_error(self, RESET_MARKER + "\n" + str(exc))
             event.accept()
 
         def _paint_status(self, running: bool):
             self.switch_label.setText("On" if running else "Off")
             if running:
-                self.status.setText("This computer is sending new connections through Tor.")
+                self.status.setText(
+                    "Apps that use the system proxy are sending new connections through Tor."
+                )
             else:
                 self.status.setText("This computer is using its normal network.")
             route = self.cfg.current_route()
@@ -479,7 +559,7 @@ def create_main_window():
                 self.status.setText("Asking for permission…")
             else:
                 self.switch_label.setText("Disconnecting")
-                self.status.setText("Turning the firewall off…")
+                self.status.setText("Restoring proxy settings…")
             self.circuit.setEnabled(False)
             job = SwitchJob(checked)
             job.progress.connect(self._on_progress)
@@ -499,7 +579,7 @@ def create_main_window():
             self._busy = False
             self.switch.update()
             self._paint_status(turning_on)
-            # Green means Tor finished and the firewall is in place. Open the
+            # Green means Tor finished and the system proxy is set. Open the
             # check page from this process, which is the desktop user.
             if turning_on and load_config().network.open_check_page:
                 open_check_page()
@@ -514,7 +594,37 @@ def create_main_window():
             self._busy = False
             self.switch.update()
             self._paint_status(not turning_on)
-            QtWidgets.QMessageBox.warning(self, "OnionFruitux", message)
+            present_switch_error(self, message)
+            if message.startswith(RESET_MARKER):
+                self.refresh()
+
+        def _offer_saved_state(self):
+            if not snapshot_path().exists():
+                return
+            box = QtWidgets.QMessageBox(self)
+            box.setWindowTitle("OnionFruitux")
+            box.setIcon(QtWidgets.QMessageBox.Icon.Question)
+            box.setText(
+                "OnionFruitux was still on, or it closed before it could put "
+                "your proxy settings back."
+            )
+            box.setInformativeText(
+                "Restore the proxy settings saved before it turned on?"
+            )
+            restore = box.addButton(
+                "Restore", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+            )
+            box.addButton("Not now", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() is not restore:
+                return
+            try:
+                disconnect_command(open_page=False)
+            except DirectUnreachable as exc:
+                present_switch_error(self, RESET_MARKER + "\n" + str(exc))
+            except OnionError as exc:
+                QtWidgets.QMessageBox.warning(self, "OnionFruitux", str(exc))
+            self.refresh()
 
         def _new_circuit(self):
             try:
