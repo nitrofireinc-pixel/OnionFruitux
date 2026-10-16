@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from onionfruitux.errors import OnionError
+from onionfruitux.errors import RESET_MARKER, DirectUnreachable, OnionError
 from onionfruitux.qtutil import load_qt
 
 
@@ -42,6 +42,9 @@ def create_switch_job():
                     )
                 else:
                     disconnect_command()
+            except DirectUnreachable as exc:
+                self.failed.emit(RESET_MARKER + "\n" + str(exc))
+                return
             except OnionError as exc:
                 self.failed.emit(str(exc))
                 return

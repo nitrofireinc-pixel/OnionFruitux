@@ -1,7 +1,7 @@
 
 # OnionFruitux
 
-OnionFruitux is a Linux switch that sends the computer's internet traffic through the [Tor](https://www.torproject.org/) network. Open the window, turn the switch on, and new connections leave through Tor. Turn it off and the computer uses its normal network again.
+OnionFruitux is a Linux switch that sends apps which follow the system proxy through the [Tor](https://www.torproject.org/) network. Open the window, turn the switch on, and those apps leave through Tor. Turn it off and they use the normal network again.
 
 It is the Linux counterpart to the kind of one-click Tor gateway people use on Windows: a dock or panel app, a command line, optional bridges, and named routes with an entry country and an exit country.
 
@@ -9,26 +9,26 @@ OnionFruitux is an independent project by Nitrofire Computing. It is not affilia
 
 ## What the switch does
 
-While the switch is on, OnionFruitux runs Tor as its own system user and adds one nftables table named `onionfruitux`.
+While the switch is on, OnionFruitux runs its own Tor and sets the **system SOCKS proxy** to that Tor (port 9155).
 
-- TCP connections are redirected into Tor.
-- DNS is redirected into Tor, including lookups that would have gone to a home router.
-- `.onion` names can resolve through Tor's DNS port.
-- DHCP keeps working, so the computer does not lose its address.
-- Other UDP is blocked, so a program cannot bypass Tor with a UDP stream.
-- The local network stays direct (printers, file shares, other machines on the LAN). There is a setting to send that through Tor as well.
-- Traffic that cannot go through Tor is rejected. That check is on by default.
-- Turning the switch off deletes only the `onionfruitux` table, restores the previous DNS settings, and stops the Tor process OnionFruitux started.
+- GNOME: `org.gnome.system.proxy` is set to manual, with the SOCKS host and port.
+- KDE: `~/.config/kioslaverc` `[Proxy Settings]` is set the same way, when the session is KDE.
+- New sessions can also pick up `ALL_PROXY` and `SOCKS_PROXY` (`socks5h://127.0.0.1:9155`). `http_proxy` is not set, because this port speaks SOCKS.
+- Before anything is changed, the current proxy settings are saved to `~/.local/state/onionfruitux/saved-state.json`. Turning the switch off puts that file back exactly, checks that the computer can reach the internet directly, and then deletes the file.
+- If the app closes, crashes, or is stopped while the switch is on, the next start offers to restore that snapshot. Quit and SIGTERM restore it as well.
+- OnionFruitux does **not** install iptables or nftables rules, does **not** rewrite `/etc/resolv.conf`, and does **not** change NetworkManager, ProtonVPN, or Tailscale.
 
-Redirected connections are accepted in the firewall. The filter runs before Linux moves a redirected packet onto the loopback interface, so a loopback allow rule does not see them. Accepting the DNAT mark is what lets them reach Tor. Without that, Tor can be fully connected while Firefox and curl still have no working web, and `panic-off` is what brings the network back.
+### Which apps follow it
 
-On Ubuntu, apps ask systemd-resolved at `127.0.0.53`. While the switch is on, OnionFruitux points resolved at `127.0.0.1:9153` and leaves the `stub-resolv.conf` symlink alone. Disconnect and `panic-off` restore the previous resolver. Port 53 is redirected as well, including lookups that would have gone to the home router.
+Apps that use the system proxy send their traffic through Tor. That includes Firefox (when it is set to use the system proxy), Chrome and Chromium on GNOME, and GNOME and KDE apps that use the desktop proxy settings.
 
-Tailscale's WireGuard UDP is blocked while the switch is on, so the tunnel pauses and MagicDNS is not used. It comes back when the switch is turned off. TCP that would have left through Tailscale goes through Tor instead, which keeps that path from being a way around Tor. Local printers and file shares stay reachable. DNS does not.
+Apps that ignore the system proxy stay on the normal connection. That includes Transmission, qBittorrent, and uTorrent. OnionFruitux leaves those alone.
+
+Hosts in **Settings → Network → Ignore hosts** also stay direct. The default list is `localhost`, `127.0.0.0/8`, and `::1`. Add a name or a network, separated by commas, when it should skip Tor.
 
 The window also has **New circuit**, which asks Tor for a fresh path. Routes remember an entry country, an exit country, and a bridge choice.
 
-When the switch turns on, OnionFruitux opens [https://check.torproject.org/](https://check.torproject.org/) in the default browser. That page says the browser is using Tor. When the switch turns off, it opens the same page again, and the page says the browser is not using Tor. The check runs after the firewall change, so the page matches the switch. Turn this off under Settings, Network, with "Open the Tor check page when the switch changes".
+When the switch turns on, OnionFruitux checks that Tor has finished connecting and that a request through the SOCKS proxy reaches [the Tor check API](https://check.torproject.org/api/ip). It then opens [https://check.torproject.org/](https://check.torproject.org/) in the default browser. If that check fails, the saved proxy settings are put back and Tor is stopped. When the switch turns off, it checks that `1.1.1.1` and `8.8.8.8` answer and that a name resolves. If that fails, it restores again. If it still fails, the window explains what is still set and offers **Reset network settings to defaults**, which sets the proxy mode to none. Turn the browser page off under Settings, Network, with "Open the Tor check page when the switch changes".
 
 ## Install
 
@@ -58,7 +58,7 @@ sudo apt install ./onionfruitux_1.0.6-1_all.deb
 
 If the switch is on, turn it off and on once after upgrading.
 
-Ubuntu's `tor` package starts its own Tor on port 9050 (`tor.service` and `tor@default.service`). OnionFruitux does not use that port, or 9051, or mDNS port 5353. It listens on 9140 (transparent proxy), 9153 (DNS), 9155 (SOCKS), and 9156 (control), and it does not stop the system Tor. `onionfruitux doctor` warns when that service is running. Stop it yourself only when you do not want it:
+Ubuntu's `tor` package starts its own Tor on port 9050 (`tor.service` and `tor@default.service`). OnionFruitux does not use that port, or 9051, or mDNS port 5353. It listens on 9155 (SOCKS) and 9156 (control), and it does not stop the system Tor. `onionfruitux doctor` warns when that service is running. Stop it yourself only when you do not want it:
 
 ```bash
 sudo systemctl disable --now tor.service tor@default.service
@@ -111,9 +111,9 @@ onionfruitux          # window
 onionfruitux tray     # panel or dock icon, with the same switch
 ```
 
-The first time the switch is turned on, the desktop asks for an admin password. That password lets OnionFruitux change the firewall. It is remembered for a little while. The window stays usable while that dialog is open and while Tor is connecting.
+The first time the switch is turned on, the desktop asks for an admin password. That password lets OnionFruitux start its own Tor. It is remembered for a little while. The window stays usable while that dialog is open and while Tor is connecting. The proxy itself is changed as you, not as root.
 
-The switch slides on and turns **orange** while Tor is starting. A status line shows the step, including the bootstrap percent. It turns **green** only after Tor is fully connected and the firewall is in place. The tray icon uses the same colors. If connecting fails or times out, the switch slides back to off and the firewall is removed. Once the switch is green, OnionFruitux opens https://check.torproject.org in your normal browser, as you, without waiting on the browser. Turn that off under Settings, Network.
+The switch slides on and turns **orange** while Tor is starting. A status line shows the step, including the bootstrap percent. It turns **green** only after Tor is fully connected, the system proxy is set, and a request through that proxy is using Tor. The tray icon uses the same colors. If connecting fails or times out, the switch slides back to off, the saved proxy settings are put back, and Tor is stopped. Once the switch is green, OnionFruitux opens https://check.torproject.org in your normal browser, as you, without waiting on the browser. Turn that off under Settings, Network.
 
 ## Routes and bridges
 
@@ -121,7 +121,7 @@ Open **Settings**.
 
 - **Routes** — **New route**, then pick the entry country and the exit country. Sites see the exit country. Choose **Only use the countries I picked** when a circuit that ignores those countries is not acceptable.
 - **Bridges** — optional. Plain, obfs4, Snowflake, meek, WebTunnel, and Conjure. Snowflake, meek, and obfs4 can use the published default bridges shipped in `onionfruitux/data/pt_config.json` (from the Tor Browser bundle). Paste lines from [bridges.torproject.org](https://bridges.torproject.org) when a network blocks the defaults, or for plain, WebTunnel, and Conjure bridges. A bridge replaces the entry country.
-- **Network** — keep the local network off Tor, block traffic that cannot use Tor, and list relay ports (for example `80, 443`) when a firewall only allows those outbound ports.
+- **Network** — list hosts that should ignore the proxy, list relay ports (for example `80, 443`) when a firewall only allows those outbound ports, and reset the system proxy mode to none.
 
 From the command line:
 
@@ -134,38 +134,35 @@ onionfruitux connect
 onionfruitux status
 onionfruitux new-circuit
 onionfruitux disconnect
-onionfruitux panic-off     # remove the firewall table even if the app froze
+onionfruitux panic-off     # stop Tor and delete a leftover firewall table from an older version
+onionfruitux reset-network # set the system proxy mode to none
 onionfruitux doctor
-onionfruitux plan          # print the torrc and firewall rules, change nothing
+onionfruitux plan          # print the torrc and proxy settings, change nothing
 ```
 
 `onionfruitux boot enable` saves the current settings and turns routing on at startup. `onionfruitux boot disable` turns that off.
 
 ## If the app froze or the network stopped working
 
-The firewall changes live only in one nftables table, `inet onionfruitux`. Deleting that table restores DNS and normal routing. These commands work on the 1.0.0 package already installed, before you upgrade:
+Current OnionFruitux only changes the system proxy, and it writes the previous values to `~/.local/state/onionfruitux/saved-state.json` first. Closing the app, or opening it again and choosing **Restore**, puts those values back. `onionfruitux reset-network` sets the proxy mode to none when the saved values are not enough. That command does not change DNS or VPN connections.
+
+Older versions also installed one nftables table, `inet onionfruitux`, redirected DNS, and on disconnect asked NetworkManager to reapply every connection. That could leave the computer with no internet, including while a ProtonVPN kill switch was up. Those versions did not change ProtonVPN on purpose, but reapplying the network and blocking UDP could drop it. This version does not install that table, does not rewrite `resolv.conf`, and does not touch ProtonVPN or Tailscale.
+
+If an older table is still installed, delete only that table:
 
 ```bash
 sudo nft list table inet onionfruitux
-sudo nft list tables
 sudo nft delete table inet onionfruitux
-sudo /usr/bin/onionfruitux --system disconnect
+onionfruitux panic-off
+onionfruitux reset-network
 ```
 
-`sudo nft delete table inet onionfruitux` is the command that brings the network back. If it says the table does not exist, the firewall is already gone. `--system disconnect` stops the Tor process this app started and does not open a browser. If that command cannot run, stop only a Tor that is using OnionFruitux's torrc (leave any other Tor alone):
+`panic-off` stops the Tor process this app started, deletes the `onionfruitux` table if it is still there, and restores a DNS snapshot if an older version saved one. It does not reconfigure NetworkManager or any VPN. It is safe to run twice. If Tor is still running and that command cannot stop it, stop only a Tor that is using OnionFruitux's torrc (leave any other Tor alone):
 
 ```bash
 ps -eo pid,args | grep /var/lib/onionfruitux/torrc
 sudo kill PID
 ```
-
-After upgrading to 1.0.1, one command does both and does not open a browser:
-
-```bash
-onionfruitux panic-off
-```
-
-It is safe to run twice. Closing the app while the switch is still orange also removes the table.
 
 ## Check the machine
 
@@ -229,7 +226,7 @@ sudo ./install.sh
 python3 -m unittest discover -s tests -v
 ```
 
-The tests build the torrc and the nftables rules and, when `nft` is installed, check the rules with `nft -c` so nothing is applied. They do not change the computer's network.
+The tests build the torrc and exercise the proxy snapshot and restore. They do not change the computer's network.
 
 Published bridge lines are refreshed from the Tor Project file recorded in `onionfruitux/data/PT_CONFIG_SOURCE.txt`.
 

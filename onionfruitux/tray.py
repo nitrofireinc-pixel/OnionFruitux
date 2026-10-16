@@ -5,12 +5,19 @@ from __future__ import annotations
 import sys
 
 from onionfruitux.cli import new_circuit_command
-from onionfruitux.errors import OnionError
-from onionfruitux.gui import PHASE_COLOR, MainWindow, _load_icon
+from onionfruitux.errors import RESET_MARKER, DirectUnreachable, OnionError
+from onionfruitux.gui import (
+    PHASE_COLOR,
+    MainWindow,
+    _install_quit_restore,
+    _load_icon,
+    _silent_quit_restore,
+    present_switch_error,
+)
 from onionfruitux.icons import install_app_icon
+from onionfruitux.proxy import quit_restore, switch_is_on
 from onionfruitux.qtutil import load_qt
 from onionfruitux.switchjob import SwitchJob
-from onionfruitux.system import read_status
 
 
 def icon_for_phase(base, phase: str, QtGui, QtCore):
@@ -57,6 +64,8 @@ def run_tray() -> int:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     app.setApplicationName("OnionFruitux")
     app.setQuitOnLastWindowClosed(False)
+    _install_quit_restore()
+    app.aboutToQuit.connect(_silent_quit_restore)
     icon = install_app_icon(app, QtGui)
     if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
         print("This session has no panel tray. Opening the window.", file=sys.stderr)
@@ -90,7 +99,7 @@ def run_tray() -> int:
     def refresh():
         if state["busy"]:
             return
-        running = bool(read_status()["running"])
+        running = switch_is_on()
         apply_phase("on" if running else "off")
 
     def on_progress(message: str):
@@ -104,7 +113,9 @@ def run_tray() -> int:
         turning_on = bool(state["job"] and state["job"].turn_on)
         state["busy"] = False
         apply_phase("off" if turning_on else "on")
-        QtWidgets.QMessageBox.warning(None, "OnionFruitux", message)
+        present_switch_error(None, message)
+        if message.startswith(RESET_MARKER):
+            refresh()
 
     def on_toggle():
         if state["busy"]:
@@ -129,6 +140,7 @@ def run_tray() -> int:
         window = window_holder.get("window")
         if window is None:
             window = MainWindow()
+            window.restore_on_close = False
             window_holder["window"] = window
         window.show()
         window.raise_()
@@ -137,7 +149,14 @@ def run_tray() -> int:
     toggle.triggered.connect(on_toggle)
     circuit.triggered.connect(on_circuit)
     show.triggered.connect(on_show)
-    quit_action.triggered.connect(app.quit)
+    def on_quit():
+        try:
+            quit_restore()
+        except DirectUnreachable as exc:
+            present_switch_error(None, RESET_MARKER + "\n" + str(exc))
+        app.quit()
+
+    quit_action.triggered.connect(on_quit)
     tray.activated.connect(
         lambda reason: on_toggle()
         if reason == QtWidgets.QSystemTrayIcon.ActivationReason.Trigger

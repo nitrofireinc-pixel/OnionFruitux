@@ -16,8 +16,6 @@ def validate_for_connect(cfg: Config) -> list[str]:
     errors: list[str] = []
     if not shutil.which("tor"):
         errors.append("tor is not installed")
-    if not shutil.which("nft"):
-        errors.append("nftables is not installed")
     try:
         pwd.getpwnam(TOR_USER)
     except KeyError:

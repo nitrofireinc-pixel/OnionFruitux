@@ -4,21 +4,16 @@ from __future__ import annotations
 
 import pwd
 import shutil
-import subprocess
-import tempfile
 from dataclasses import dataclass
 
 from onionfruitux import bridges
 from onionfruitux.config import Config
-from onionfruitux.firewall import render_firewall
 from onionfruitux.listeners import distro_tor_listeners, our_port_conflicts
 from onionfruitux.paths import (
     CONTROL_PORT,
-    DNS_PORT,
     DISTRO_TOR_PORT,
     SOCKS_PORT,
     TOR_USER,
-    TRANS_PORT,
 )
 from onionfruitux.torrc import geoip_paths
 
@@ -35,8 +30,14 @@ def collect_checks(cfg: Config) -> list[Check]:
     checks: list[Check] = []
     tor = shutil.which("tor")
     checks.append(Check("tor", bool(tor), tor or "install the tor package"))
-    nft = shutil.which("nft")
-    checks.append(Check("nft", bool(nft), nft or "install nftables"))
+    checks.append(
+        Check(
+            "proxy",
+            True,
+            "system SOCKS proxy; firewall rules are not installed",
+            required=False,
+        )
+    )
     try:
         user = pwd.getpwnam(TOR_USER)
         checks.append(Check("user onionfruitux", True, f"uid {user.pw_uid}"))
@@ -99,7 +100,6 @@ def collect_checks(cfg: Config) -> list[Check]:
     )
     checks.append(_qt_check())
     checks.extend(_port_checks())
-    checks.append(_nft_syntax_check(cfg, nft))
     return checks
 
 
@@ -129,7 +129,7 @@ def _port_checks() -> list[Check]:
             Check(
                 "ports",
                 True,
-                f"{TRANS_PORT}, {DNS_PORT}, {SOCKS_PORT}, and {CONTROL_PORT} are free",
+                f"{SOCKS_PORT} and {CONTROL_PORT} are free",
             )
         )
     holders = distro_tor_listeners()
@@ -178,40 +178,3 @@ def _qt_check() -> Check:
             "install python3-pyqt6 or python3-pyside6",
             required=False,
         )
-
-
-def _nft_syntax_check(cfg: Config, nft: str | None) -> Check:
-    if not nft:
-        return Check("firewall syntax", False, "nft is not installed", required=False)
-    rules = render_firewall(cfg.network)
-    with tempfile.NamedTemporaryFile("w", suffix=".nft", delete=False) as handle:
-        handle.write(rules)
-        name = handle.name
-    try:
-        result = subprocess.run(
-            [nft, "-c", "-f", name],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    finally:
-        try:
-            import os
-
-            os.unlink(name)
-        except OSError:
-            pass
-    if result.returncode == 0:
-        return Check("firewall syntax", True, "nft -c accepted the rules", required=False)
-    detail = (result.stderr or result.stdout or "nft -c failed").strip()
-    if "not permitted" in detail.lower() or "operation not permitted" in detail.lower():
-        return Check(
-            "firewall syntax",
-            True,
-            "nft -c needs permission on this machine; rules were not loaded",
-            required=False,
-        )
-    lowered = detail.lower()
-    if "no such file" in lowered or "could not process" in lowered and TOR_USER in detail:
-        return Check("firewall syntax", False, detail, required=False)
-    return Check("firewall syntax", False, detail, required=False)

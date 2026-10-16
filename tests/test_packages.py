@@ -93,7 +93,8 @@ class PackageMetadataTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("This command changes nothing", result.stdout)
-        self.assertIn("table inet onionfruitux", result.stdout)
+        self.assertIn("### system proxy", result.stdout)
+        self.assertNotIn("table inet onionfruitux", result.stdout)
 
     def test_process_comm_is_the_app_name(self):
         code = (

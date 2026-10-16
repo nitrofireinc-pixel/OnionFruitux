@@ -1,6 +1,6 @@
 """Open the Tor Project check page after a successful connection.
 
-The caller is the desktop user. The pkexec child that changes the firewall
+The caller is the desktop user. The pkexec child that starts Tor
 does not call this. Popen returns immediately, so the window is not blocked
 on the browser.
 """

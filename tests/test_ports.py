@@ -54,7 +54,7 @@ class ProbeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "notice.log"
             log.write_text(
-                "Opened Transparent pf/netfilter listener on 127.0.0.1:9140\n",
+                "Opened Socks listener on 127.0.0.1:9155\n",
                 encoding="utf-8",
             )
             with patch.object(system, "LOG_PATH", log), \
@@ -131,7 +131,7 @@ class ConflictTests(unittest.TestCase):
     def test_preflight_reports_the_process_holding_the_port(self):
         message = (
             "OnionFruitux's SOCKS port 9155 is already in use by "
-            "tor (pid 9) running as debian-tor. The firewall was not changed."
+            "tor (pid 9) running as debian-tor. The system proxy was not changed."
         )
         with patch("onionfruitux.preflight.our_port_conflicts", return_value=[message]):
             errors = validate_for_connect(Config())

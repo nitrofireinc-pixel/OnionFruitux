@@ -1,4 +1,4 @@
-"""Connect waits for Tor, then installs the firewall. Nothing here routes traffic."""
+"""Connect waits for Tor. Nothing here changes the proxy or the firewall."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class ConnectOrderTests(unittest.TestCase):
             patch.object(system, "_rollback_network"),
         )
 
-    def test_firewall_is_applied_only_after_bootstrap(self):
+    def test_tor_is_started_only_after_bootstrap_without_firewall_or_dns(self):
         order = []
 
         def bootstrap(timeout, progress=None, abort=None):
@@ -41,38 +41,40 @@ class ConnectOrderTests(unittest.TestCase):
                 progress("Tor bootstrap 100%…")
             return 100
 
-        def apply(rules):
-            order.append("firewall")
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("network command")
 
         patches = self._common()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              patches[6], patches[7], \
              patch.object(system, "_wait_for_listeners", return_value=True), \
              patch.object(system, "_wait_bootstrap", side_effect=bootstrap), \
-             patch.object(system, "apply_ruleset", side_effect=apply), \
-             patch.object(system, "engage_dns", side_effect=lambda: order.append("dns")), \
+             patch.object(system.subprocess, "run", side_effect=forbidden), \
              patch.object(system, "_write_state") as state:
             messages = []
             system.connect(Config(), progress=messages.append)
-        self.assertEqual(order, ["bootstrap", "firewall", "dns"])
+        self.assertEqual(order, ["bootstrap"])
         self.assertIn("Tor bootstrap 100%…", messages)
-        self.assertIn("Applying the firewall…", messages)
+        self.assertNotIn("Applying the firewall…", messages)
+        self.assertNotIn("Sending name lookup through Tor…", messages)
         self.assertEqual(messages[-1], "Connected.")
         state.assert_called_with(True, 42, "")
+        source = Path("onionfruitux/system.py").read_text(encoding="utf-8")
+        self.assertNotIn("engage_dns", source)
+        self.assertNotIn("nft -f", source)
+        self.assertNotIn("apply_ruleset", source)
 
     def test_bootstrap_timeout_does_not_install_the_firewall(self):
         patches = self._common()
         with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
              patches[6], patches[7] as rollback, \
              patch.object(system, "_wait_for_listeners", return_value=True), \
-             patch.object(system, "_wait_bootstrap", return_value=40), \
-             patch.object(system, "apply_ruleset") as apply:
+             patch.object(system, "_wait_bootstrap", return_value=40):
             with self.assertRaises(OnionError) as caught:
                 system.connect(Config())
-        apply.assert_not_called()
         rollback.assert_called_once()
         self.assertIn("time limit", str(caught.exception))
-        self.assertIn("firewall was not changed", str(caught.exception))
+        self.assertIn("proxy was not changed", str(caught.exception))
 
     def test_stale_heartbeat_rolls_back_before_the_firewall(self):
         def wait_listeners(timeout, abort=None):
@@ -86,11 +88,9 @@ class ConnectOrderTests(unittest.TestCase):
             patches = self._common()
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
                  patches[6], patches[7] as rollback, \
-                 patch.object(system, "_wait_for_listeners", side_effect=wait_listeners), \
-                 patch.object(system, "apply_ruleset") as apply:
+                 patch.object(system, "_wait_for_listeners", side_effect=wait_listeners):
                 with self.assertRaises(OnionError) as caught:
                     system.connect(Config(), heartbeat_file=str(heartbeat))
-        apply.assert_not_called()
         rollback.assert_called_once()
         self.assertIn("closed", str(caught.exception))
 
@@ -105,25 +105,6 @@ class ConnectOrderTests(unittest.TestCase):
             with self.assertRaises(OnionError):
                 system.connect(Config())
         self.assertEqual(order, ["reset", "spawn"])
-
-    def test_nft_timeout_is_a_clean_error(self):
-        proc = type("Nft", (), {})()
-        proc.pid = 7
-        calls = {"n": 0}
-
-        def communicate(rules=None, timeout=None):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise subprocess.TimeoutExpired(cmd="nft", timeout=15)
-            return ("", "")
-
-        proc.communicate = communicate
-        proc.kill = lambda: None
-        with patch.object(system, "delete_table"), \
-             patch.object(system.subprocess, "Popen", return_value=proc):
-            with self.assertRaises(OnionError) as caught:
-                system.apply_ruleset("table inet onionfruitux {\n}\n")
-        self.assertIn("nftables did not finish", str(caught.exception))
 
     def test_panic_off_removes_the_table_and_tor(self):
         with patch.object(system.os, "geteuid", return_value=0), \
@@ -163,7 +144,7 @@ class ConnectOrderTests(unittest.TestCase):
                  "our_port_conflicts",
                  return_value=[
                      "OnionFruitux's SOCKS port 9155 is already in use by "
-                     "tor (pid 9) running as debian-tor. The firewall was not changed."
+                     "tor (pid 9) running as debian-tor. The system proxy was not changed."
                  ],
              ), \
              patch.object(system, "_spawn_tor") as spawn:
@@ -248,15 +229,13 @@ class ConnectOrderTests(unittest.TestCase):
                  patch.object(system, "_spawn_tor", return_value=proc), \
                  patch.object(system, "_wait_for_listeners", side_effect=wait_listeners), \
                  patch.object(system, "LOG_PATH", log), \
-                 patch.object(system, "STDERR_PATH", err), \
-                 patch.object(system, "apply_ruleset") as apply:
+                 patch.object(system, "STDERR_PATH", err):
                 with self.assertRaises(OnionError) as caught:
                     system.connect(Config())
         self.assertLess(time.time() - started, 3)
         text = str(caught.exception)
         self.assertIn("Caught signal 11", text)
-        self.assertIn("firewall was not changed", text)
-        apply.assert_not_called()
+        self.assertIn("proxy was not changed", text)
 
     def test_bootstrap_percent_uses_the_latest_line(self):
         with tempfile.TemporaryDirectory() as tmp:

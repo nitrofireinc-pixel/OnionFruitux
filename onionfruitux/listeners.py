@@ -10,17 +10,13 @@ from pathlib import Path
 
 from onionfruitux.paths import (
     CONTROL_PORT,
-    DNS_PORT,
     DISTRO_TOR_PORT,
     SOCKS_PORT,
     TORRC_PATH,
-    TRANS_PORT,
 )
 
-# name, port. The firewall redirects into the first two. All four must be free.
+# name, port. Apps reach Tor through the SOCKS port. Both must be free.
 APP_PORTS = (
-    ("transparent proxy", TRANS_PORT),
-    ("DNS", DNS_PORT),
     ("SOCKS", SOCKS_PORT),
     ("control", CONTROL_PORT),
 )
@@ -37,7 +33,7 @@ def our_port_conflicts() -> list[str]:
         who = "; ".join(holders)
         messages.append(
             f"OnionFruitux's {name} port {port} is already in use by {who}. "
-            "The firewall was not changed."
+            "The system proxy was not changed."
         )
     return messages
 
