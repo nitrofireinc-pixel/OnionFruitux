@@ -132,7 +132,11 @@ id onionfruitux >/dev/null
 
 plan=$(onionfruitux plan)
 printf '%s\n' "$plan" | grep -F 'This command changes nothing' >/dev/null
-printf '%s\n' "$plan" | grep -F 'table inet onionfruitux' >/dev/null
+printf '%s\n' "$plan" | grep -F '### system proxy' >/dev/null
+if printf '%s\n' "$plan" | grep -F 'table inet onionfruitux' >/dev/null; then
+  echo "plan still describes an nftables table" >&2
+  exit 1
+fi
 onionfruitux status | grep -F 'OnionFruitux is off' >/dev/null
 onionfruitux doctor
 
