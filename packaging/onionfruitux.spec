@@ -1,5 +1,5 @@
 Name: onionfruitux
-Version: 1.0.6
+Version: 1.0.7
 Release: 1
 Summary: Send this computer's internet through Tor
 License: GPL-3.0-or-later
@@ -88,6 +88,11 @@ fi
 /usr/lib/systemd/system/onionfruitux.service
 
 %changelog
+* Sat Nov 21 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.7-1
+- Send apps that follow the system proxy through Tor, instead of installing a firewall table.
+- Save the previous proxy settings and restore them when the switch turns off, or if the app closes or crashes.
+- Check that traffic is using Tor after connect, and that the internet works directly after disconnect.
+
 * Sat Oct 10 2026 Nitrofire Computing <nitrofireinc@gmail.com> - 1.0.6-1
 - Restore per-link DNS and default routes when the switch turns off.
 
