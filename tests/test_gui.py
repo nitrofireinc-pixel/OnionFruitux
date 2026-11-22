@@ -47,8 +47,8 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(window.switch.isChecked())
         self.assertIn("normal network", window.status.text())
         self.assertFalse(window.circuit.isEnabled())
-        self.assertEqual(switch_label(False), "Turn on")
-        self.assertEqual(switch_label(True), "Turn off")
+        self.assertEqual(switch_label(False), "Connect")
+        self.assertEqual(switch_label(True), "Disconnect")
 
         _window_cls, settings_cls, route_cls = create_main_window()
         settings = settings_cls()
@@ -58,6 +58,13 @@ class GuiTests(unittest.TestCase):
         self.assertIsNotNone(check)
         self.assertEqual(check.text(), "Open the Tor check page when the switch changes")
         self.assertTrue(check.isChecked())
+        close_to_tray = settings.findChild(self.QtWidgets.QCheckBox, "closeToTray")
+        self.assertIsNotNone(close_to_tray)
+        self.assertEqual(
+            close_to_tray.text(),
+            "Close the window to the tray instead of quitting",
+        )
+        self.assertTrue(close_to_tray.isChecked())
         ignore = settings.findChild(self.QtWidgets.QLineEdit, "ignoreHosts")
         self.assertIsNotNone(ignore)
         self.assertIn("localhost", ignore.text())
@@ -187,7 +194,7 @@ class GuiTests(unittest.TestCase):
             image = icon.pixmap(64, 64).toImage()
             self.assertFalse(image.isNull())
             samples[phase] = image.pixelColor(32, 32)
-            self.assertTrue(tray_tip(phase).startswith("OnionFruitux is "))
+            self.assertTrue(tray_tip(phase).startswith("OnionFruiTux is "))
         self.assertGreater(samples["connecting"].red(), samples["off"].red())
         self.assertGreater(samples["on"].green(), samples["on"].red())
         self.assertEqual(PHASE_COLOR["on"], "#3dba7a")
@@ -236,3 +243,60 @@ class GuiTests(unittest.TestCase):
         self.assertIn("packaging/onionfruitux-bin", stage)
         self.assertIn("packaging/onionfruitux-bin", installer)
         del QtCore, app
+
+
+    def test_close_event_hides_to_the_tray_when_the_setting_is_on(self):
+        from onionfruitux.gui import MainWindow
+        from onionfruitux.recover import RecoverResult
+
+        with patch("onionfruitux.recover.recover_session", return_value=RecoverResult("idle", False, "")):
+            window = MainWindow()
+        window._timer.stop()
+        window._tray = type("Tray", (), {"isVisible": lambda self: True})()
+        window.show()
+        self.app.processEvents()
+        with patch("onionfruitux.cli.shutdown_session") as shutdown:
+            window.close()
+            self.app.processEvents()
+        shutdown.assert_not_called()
+        self.assertTrue(window.isHidden())
+
+    def test_close_event_quits_when_close_to_tray_is_off(self):
+        from onionfruitux.config import NetworkSettings, load_config, save_config
+        from onionfruitux.gui import MainWindow
+        from onionfruitux.recover import RecoverResult
+
+        cfg = load_config()
+        cfg.network = NetworkSettings(close_to_tray=False).cleaned()
+        save_config(cfg)
+        with patch("onionfruitux.recover.recover_session", return_value=RecoverResult("idle", False, "")):
+            window = MainWindow()
+        window._timer.stop()
+        window._tray = type("Tray", (), {"isVisible": lambda self: True})()
+        with patch("onionfruitux.cli.shutdown_session") as shutdown:
+            window.close()
+            self.app.processEvents()
+        shutdown.assert_called_once()
+
+    def test_recover_note_is_shown_on_startup(self):
+        from onionfruitux.gui import MainWindow
+        from onionfruitux.recover import ATTACHED_NOTE, RecoverResult
+
+        with patch(
+            "onionfruitux.recover.recover_session",
+            return_value=RecoverResult("attached", True, ATTACHED_NOTE),
+        ), patch("onionfruitux.gui.switch_is_on", return_value=True):
+            window = MainWindow()
+        window._timer.stop()
+        self.assertEqual(window.status.text(), ATTACHED_NOTE)
+        self.assertTrue(window.switch.isChecked())
+
+    def test_gnome_without_appindicator_falls_back(self):
+        from onionfruitux.tray import GNOME_TRAY_NOTE, tray_is_usable
+
+        QtCore, QtGui, QtWidgets = load_qt()
+        with patch("onionfruitux.tray.desktop_is_gnome", return_value=True),              patch("onionfruitux.tray.status_notifier_watcher", return_value=False),              patch.object(QtWidgets.QSystemTrayIcon, "isSystemTrayAvailable", return_value=True):
+            usable, note = tray_is_usable(QtWidgets)
+        self.assertFalse(usable)
+        self.assertEqual(note, GNOME_TRAY_NOTE)
+        del QtCore, QtGui

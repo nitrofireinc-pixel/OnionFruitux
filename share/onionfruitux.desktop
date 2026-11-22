@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=OnionFruitux
+Name=OnionFruiTux
 GenericName=Tor gateway
 Comment=Send this computer's internet through Tor
 Exec=onionfruitux

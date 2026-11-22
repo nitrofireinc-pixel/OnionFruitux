@@ -72,8 +72,17 @@ answer and that a name resolves, and then deletes the file. If the check
 fails, the snapshot is restored again. If it still fails, the window shows
 what is still set and offers
 .BR "Reset network settings to defaults" ,
-which sets the proxy mode to none. Quit and SIGTERM restore the snapshot too.
-The next start offers to restore a snapshot left behind by a crash or reboot.
+which sets the proxy mode to none.
+Closing the window hides it to the tray and leaves the switch as it is.
+Turn that off under Settings, Network, with
+.B "Close the window to the tray instead of quitting" .
+Quit, from the tray menu, turns the switch off, stops Tor, and restores the
+snapshot. SIGTERM and logout try the same cleanup. If the session has no
+tray, closing the window quits.
+The next start checks for leftover Tor, firewall, DNS, or proxy state. If
+OnionFruiTux's Tor is still healthy, the switch is turned back on. Otherwise
+leftovers are cleaned up so turning the switch on does not fail because a
+port is already in use.
 .PP
 OnionFruitux does not install iptables or nftables rules, does not rewrite
 .IR resolv.conf ,
@@ -133,8 +142,10 @@ and
 .BR Settings .
 .TP
 .B tray
-Show a panel or dock icon with the same switch. The menu can turn the switch
-on or off, ask for a new circuit, or open the window.
+Show a panel or dock icon with the same switch. The menu can show or hide
+the window, connect or disconnect, ask for a new circuit, or quit. Quit
+turns the switch off and restores the saved proxy. If this session has no
+tray, the window is opened instead.
 .TP
 .B route add \fIname\fR
 Save a named route. A later
@@ -168,14 +179,19 @@ turn it off and on to use the new route.
 Delete a saved route.
 .TP
 .B connect
-Turn the switch on. This starts Tor, waits until Tor is fully connected, saves
-the current proxy settings, points the system SOCKS proxy at Tor, and checks
-the Tor Project API through that proxy. On failure the saved settings are put
-back and Tor is stopped.
+Turn the switch on. A leftover OnionFruiTux Tor is reattached if it is still
+healthy, or cleaned up first so the ports are free. Then this starts Tor,
+waits until Tor is fully connected, saves the current proxy settings, points
+the system SOCKS proxy at Tor, and checks the Tor Project API through that
+proxy. On failure the saved settings are put back and Tor is stopped.
 .TP
 .B disconnect
 Turn the switch off, restore the saved proxy settings, and check that the
 computer can reach the internet directly.
+.TP
+.B recover
+Reattach a leftover OnionFruiTux Tor if it is still healthy, or stop it and
+clean up leftover firewall, DNS, and proxy state.
 .TP
 .B panic\-off
 Stop OnionFruitux's Tor immediately, even if the window froze or the saved

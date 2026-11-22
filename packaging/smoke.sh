@@ -137,7 +137,7 @@ if printf '%s\n' "$plan" | grep -F 'table inet onionfruitux' >/dev/null; then
   echo "plan still describes an nftables table" >&2
   exit 1
 fi
-onionfruitux status | grep -F 'OnionFruitux is off' >/dev/null
+onionfruitux status | grep -F 'OnionFruiTux is off' >/dev/null
 onionfruitux doctor
 
 # man may emit overstrike bold (o^Ho). Strip that before matching.

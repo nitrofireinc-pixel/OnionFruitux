@@ -98,6 +98,7 @@ class NetworkSettings:
     relay_ports: str = ""
     open_check_page: bool = True
     ignore_hosts: str = DEFAULT_IGNORE_HOSTS
+    close_to_tray: bool = True
 
     def cleaned(self) -> NetworkSettings:
         ports = parse_relay_ports(self.relay_ports)
@@ -107,6 +108,7 @@ class NetworkSettings:
             relay_ports=shown,
             open_check_page=bool(self.open_check_page),
             ignore_hosts=hosts,
+            close_to_tray=bool(self.close_to_tray),
         )
 
 
@@ -152,6 +154,7 @@ def load_config(path: Path | None = None) -> Config:
             relay_ports=str(net_raw.get("relay_ports") or ""),
             open_check_page=bool(net_raw.get("open_check_page", True)),
             ignore_hosts=str(net_raw.get("ignore_hosts", DEFAULT_IGNORE_HOSTS)),
+            close_to_tray=bool(net_raw.get("close_to_tray", True)),
         ).cleaned()
     except ValueError as exc:
         raise OnionError(f"{target}: {exc}") from exc

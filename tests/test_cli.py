@@ -353,7 +353,7 @@ class CliTests(unittest.TestCase):
         out = StringIO()
         with redirect_stdout(out):
             self.assertEqual(cli.main(["status"]), 0)
-        self.assertIn("OnionFruitux is off", out.getvalue())
+        self.assertIn("OnionFruiTux is off", out.getvalue())
 
     def test_new_circuit_when_off(self):
         with patch.object(cli.system_mod, "read_status", return_value={"running": False}):

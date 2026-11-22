@@ -271,6 +271,69 @@ def switch_is_on() -> bool:
     return bool(read_status()["running"]) and snapshot_path().exists()
 
 
+def write_fallback_snapshot() -> None:
+    """Record a restore target of no proxy when the original snapshot is gone."""
+    gnome: dict = {"available": _gnome_available(), "values": {}}
+    if gnome["available"]:
+        gnome["values"] = {
+            "org.gnome.system.proxy mode": "'none'",
+            "org.gnome.system.proxy.socks host": "''",
+            "org.gnome.system.proxy.socks port": "0",
+            "org.gnome.system.proxy use-same-proxy": "false",
+        }
+    kde = _read_kde()
+    if kde.get("applicable"):
+        kde = {
+            **kde,
+            "existed": True,
+            "had_group": True,
+            "group": {"ProxyType": "0", "socksProxy": ""},
+        }
+    payload = {
+        "version": 1,
+        "gnome": gnome,
+        "kde": kde,
+        "environment": {
+            "path": str(environment_file()),
+            "existed": False,
+            "text": None,
+            "session": {
+                "available": bool(shutil.which("systemctl")),
+                "values": {key: None for key in SESSION_KEYS},
+            },
+        },
+    }
+    _write_snapshot(payload)
+
+
+def proxy_is_ours(port: int = SOCKS_PORT) -> bool:
+    """True when the system proxy already points at OnionFruitux's SOCKS port."""
+    gnome = _read_gnome()
+    if gnome.get("available"):
+        values = gnome.get("values") or {}
+        mode = _plain(str(values.get(_gnome_id("mode"), "")))
+        host = _plain(str(values.get(_gnome_id("socks-host"), "")))
+        socks_port = _plain(str(values.get(_gnome_id("socks-port"), "")))
+        if mode == "manual" and host in {SOCKS_HOST, "localhost"} and socks_port == str(port):
+            return True
+    kde = _read_kde()
+    if kde.get("applicable"):
+        group = kde.get("group") or {}
+        if str(group.get("ProxyType", "")) == "1" and group.get("socksProxy") == f"socks://{SOCKS_HOST}:{port}":
+            return True
+    target = f"socks5h://{SOCKS_HOST}:{port}"
+    for key in SESSION_KEYS:
+        if os.environ.get(key) == target:
+            return True
+    path = environment_file()
+    try:
+        if path.exists() and target in path.read_text(encoding="utf-8", errors="replace"):
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def proxy_plan(port: int, ignore_hosts: str) -> str:
     hosts = ", ".join(parse_ignore_hosts(ignore_hosts)) or "(none)"
     return "\n".join(

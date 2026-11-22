@@ -7,7 +7,7 @@ import signal
 import sys
 
 from onionfruitux.checkpage import open_check_page
-from onionfruitux.cli import disconnect_command, new_circuit_command
+from onionfruitux.cli import new_circuit_command
 from onionfruitux.switchjob import SwitchJob
 from onionfruitux.config import (
     BRIDGE_TYPES,
@@ -22,7 +22,7 @@ from onionfruitux.config import (
 from onionfruitux.countries import country_choices
 from onionfruitux.errors import RESET_MARKER, DirectUnreachable, OnionError
 from onionfruitux.icons import install_app_icon, load_onion_icon
-from onionfruitux.proxy import quit_restore, reset_proxy_defaults, snapshot_path, switch_is_on
+from onionfruitux.proxy import quit_restore, reset_proxy_defaults, switch_is_on
 from onionfruitux.qtutil import load_qt
 
 _PROXY_NOTE = (
@@ -65,13 +65,26 @@ QCheckBox::indicator { width: 16px; height: 16px; }
 def run_window() -> int:
     QtCore, QtGui, QtWidgets = load_qt()
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("OnionFruitux")
+    app.setApplicationName("OnionFruiTux")
     install_app_icon(app, QtGui)
     app.setStyle("Fusion")
     app.setStyleSheet(_STYLE)
     _install_quit_restore()
     app.aboutToQuit.connect(_silent_quit_restore)
     window = MainWindow()
+    from onionfruitux.tray import attach_tray
+
+    tray, tray_note = attach_tray(app, window)
+    if tray is None:
+        app.setQuitOnLastWindowClosed(True)
+        if tray_note:
+            window._tray_note = tray_note
+    else:
+        app.setQuitOnLastWindowClosed(False)
+    if getattr(window, "_recover_note", ""):
+        window.status.setText(window._recover_note)
+    elif getattr(window, "_tray_note", ""):
+        window.status.setText(window._tray_note)
     window.show()
     return app.exec()
 
@@ -101,10 +114,31 @@ def present_switch_error(parent, message: str) -> None:
     QtWidgets.QMessageBox.warning(parent, "OnionFruitux", message)
 
 
+def _best_effort_teardown() -> None:
+    """Restore the proxy and try to stop Tor without asking for a password."""
+    try:
+        from onionfruitux.cli import session_was_shutdown
+
+        if session_was_shutdown():
+            return
+    except Exception:
+        pass
+    try:
+        quit_restore()
+    except Exception:
+        pass
+    try:
+        from onionfruitux import system
+
+        system.stop_tor()
+    except Exception:
+        return
+
+
 def _install_quit_restore() -> None:
     def _on_signal(signum, _frame):
         try:
-            quit_restore()
+            _best_effort_teardown()
         finally:
             os._exit(128 + int(signum))
 
@@ -113,10 +147,7 @@ def _install_quit_restore() -> None:
 
 
 def _silent_quit_restore() -> None:
-    try:
-        quit_restore()
-    except Exception:
-        return
+    _best_effort_teardown()
 
 
 def create_main_window():
@@ -303,6 +334,11 @@ def create_main_window():
             )
             self.check_page.setObjectName("openCheckPage")
             self.check_page.setChecked(self.cfg.network.open_check_page)
+            self.close_to_tray = widgets.QCheckBox(
+                "Close the window to the tray instead of quitting"
+            )
+            self.close_to_tray.setObjectName("closeToTray")
+            self.close_to_tray.setChecked(self.cfg.network.close_to_tray)
             self.ignore_hosts = widgets.QLineEdit(self.cfg.network.ignore_hosts)
             self.ignore_hosts.setObjectName("ignoreHosts")
             self.ignore_hosts.setPlaceholderText("localhost, 127.0.0.0/8, ::1")
@@ -322,6 +358,7 @@ def create_main_window():
             reset.clicked.connect(self._reset_network)
             form = widgets.QFormLayout(page)
             form.addRow(self.check_page)
+            form.addRow(self.close_to_tray)
             form.addRow("Ignore hosts", self.ignore_hosts)
             form.addRow("Relay ports", self.relay_ports)
             form.addRow(hint)
@@ -407,6 +444,7 @@ def create_main_window():
             self._bridge_drafts[self._current_bridge] = self.bridge_text.toPlainText()
             self.cfg.bridge_lines = dict(self._bridge_drafts)
             self.cfg.network.open_check_page = self.check_page.isChecked()
+            self.cfg.network.close_to_tray = self.close_to_tray.isChecked()
             self.cfg.network.ignore_hosts = self.ignore_hosts.text()
             self.cfg.network.relay_ports = self.relay_ports.text()
             try:
@@ -432,17 +470,20 @@ def create_main_window():
     class Window(QtWidgets.QWidget):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle("OnionFruitux")
+            self.setWindowTitle("OnionFruiTux")
             self.setObjectName("mainWindow")
             self.resize(460, 420)
             self._busy = False
             self._turning_on = False
             self._job = None
             self.restore_on_close = True
+            self._tray = None
+            self._recover_note = ""
+            self._tray_note = ""
             self.cfg = load_config()
             self.setWindowIcon(load_onion_icon(QtGui))
 
-            title = QtWidgets.QLabel("OnionFruitux")
+            title = QtWidgets.QLabel("OnionFruiTux")
             title.setObjectName("title")
             subtitle = QtWidgets.QLabel(
                 "Send apps that use the system proxy through Tor."
@@ -516,18 +557,37 @@ def create_main_window():
             self._paint_status(running)
 
         def closeEvent(self, event):  # noqa: N802
-            # Quitting the app puts the saved proxy back. A window opened from
-            # the tray does not, because the tray is still running.
+            # Close-to-tray hides the window and leaves Tor running. Quit, a
+            # disabled close-to-tray setting, or a missing tray does a clean
+            # shutdown instead.
+            if self._should_hide_to_tray():
+                event.ignore()
+                self.hide()
+                return
             if self.restore_on_close:
                 try:
-                    quit_restore()
+                    from onionfruitux.cli import shutdown_session
+
+                    shutdown_session()
                 except DirectUnreachable as exc:
                     present_switch_error(self, RESET_MARKER + "\n" + str(exc))
+                except OnionError as exc:
+                    QtWidgets.QMessageBox.warning(self, "OnionFruiTux", str(exc))
             event.accept()
+
+        def _should_hide_to_tray(self) -> bool:
+            if not load_config().network.close_to_tray:
+                return False
+            tray = getattr(self, "_tray", None)
+            return tray is not None and tray.isVisible()
 
         def _paint_status(self, running: bool):
             self.switch_label.setText("On" if running else "Off")
-            if running:
+            if self._recover_note:
+                self.status.setText(self._recover_note)
+            elif self._tray_note and not running:
+                self.status.setText(self._tray_note)
+            elif running:
                 self.status.setText(
                     "Apps that use the system proxy are sending new connections through Tor."
                 )
@@ -549,6 +609,7 @@ def create_main_window():
         def _toggled(self, checked: bool):
             if self._busy:
                 return
+            self._recover_note = ""
             self._busy = True
             self._turning_on = checked
             self.switch.setEnabled(False)
@@ -599,32 +660,18 @@ def create_main_window():
                 self.refresh()
 
         def _offer_saved_state(self):
-            if not snapshot_path().exists():
-                return
-            box = QtWidgets.QMessageBox(self)
-            box.setWindowTitle("OnionFruitux")
-            box.setIcon(QtWidgets.QMessageBox.Icon.Question)
-            box.setText(
-                "OnionFruitux was still on, or it closed before it could put "
-                "your proxy settings back."
-            )
-            box.setInformativeText(
-                "Restore the proxy settings saved before it turned on?"
-            )
-            restore = box.addButton(
-                "Restore", QtWidgets.QMessageBox.ButtonRole.AcceptRole
-            )
-            box.addButton("Not now", QtWidgets.QMessageBox.ButtonRole.RejectRole)
-            box.exec()
-            if box.clickedButton() is not restore:
-                return
+            from onionfruitux.recover import recover_session
+
             try:
-                disconnect_command(open_page=False)
-            except DirectUnreachable as exc:
-                present_switch_error(self, RESET_MARKER + "\n" + str(exc))
+                result = recover_session()
             except OnionError as exc:
-                QtWidgets.QMessageBox.warning(self, "OnionFruitux", str(exc))
+                self._recover_note = str(exc)
+                self.status.setText(self._recover_note)
+                return
             self.refresh()
+            if result.note:
+                self._recover_note = result.note
+                self.status.setText(result.note)
 
         def _new_circuit(self):
             try:

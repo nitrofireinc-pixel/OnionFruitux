@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -94,6 +95,8 @@ class ManPageTests(unittest.TestCase):
             "pt_config.json",
         ):
             self.assertIn(phrase, text)
+        if not shutil.which("groff"):
+            self.skipTest("groff is not installed")
         rendered = subprocess.run(
             ["groff", "-man", "-Tutf8", "-z", str(manual)],
             capture_output=True,

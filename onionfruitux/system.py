@@ -469,6 +469,11 @@ def _our_tor_pids() -> list[int]:
     return found
 
 
+def list_our_tor() -> list[int]:
+    """PIDs of live Tor processes started with OnionFruitux's torrc."""
+    return [pid for pid in _our_tor_pids() if _alive(pid) and _is_our_tor(pid)]
+
+
 def _stop_pid(pid: int) -> None:
     if not _is_our_tor(pid):
         return

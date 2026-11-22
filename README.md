@@ -15,7 +15,8 @@ While the switch is on, OnionFruitux runs its own Tor and sets the **system SOCK
 - KDE: `~/.config/kioslaverc` `[Proxy Settings]` is set the same way, when the session is KDE.
 - New sessions can also pick up `ALL_PROXY` and `SOCKS_PROXY` (`socks5h://127.0.0.1:9155`). `http_proxy` is not set, because this port speaks SOCKS.
 - Before anything is changed, the current proxy settings are saved to `~/.local/state/onionfruitux/saved-state.json`. Turning the switch off puts that file back exactly, checks that the computer can reach the internet directly, and then deletes the file.
-- If the app closes, crashes, or is stopped while the switch is on, the next start offers to restore that snapshot. Quit and SIGTERM restore it as well.
+- Closing the window hides OnionFruiTux to the tray and leaves the switch as it is. Quit (from the tray, or after turning off "Close the window to the tray instead of quitting" in Settings) turns the switch off, stops Tor, and restores the saved proxy. SIGTERM and logout try the same cleanup. If this session has no tray (for example GNOME without the AppIndicator extension), closing the window quits and turns the switch off.
+- If the app crashes or is stopped while the switch is on, the next start checks for leftover Tor, firewall, DNS, or proxy state. If our Tor is still healthy, the switch is turned back on. Otherwise leftovers are cleaned up so turning the switch on does not fail with a port-in-use error.
 - OnionFruitux does **not** install iptables or nftables rules, does **not** rewrite `/etc/resolv.conf`, and does **not** change NetworkManager, ProtonVPN, or Tailscale.
 
 ### Which apps follow it
@@ -121,7 +122,7 @@ Open **Settings**.
 
 - **Routes** — **New route**, then pick the entry country and the exit country. Sites see the exit country. Choose **Only use the countries I picked** when a circuit that ignores those countries is not acceptable.
 - **Bridges** — optional. Plain, obfs4, Snowflake, meek, WebTunnel, and Conjure. Snowflake, meek, and obfs4 can use the published default bridges shipped in `onionfruitux/data/pt_config.json` (from the Tor Browser bundle). Paste lines from [bridges.torproject.org](https://bridges.torproject.org) when a network blocks the defaults, or for plain, WebTunnel, and Conjure bridges. A bridge replaces the entry country.
-- **Network** — list hosts that should ignore the proxy, list relay ports (for example `80, 443`) when a firewall only allows those outbound ports, and reset the system proxy mode to none.
+- **Network** — list hosts that should ignore the proxy, list relay ports (for example `80, 443`) when a firewall only allows those outbound ports, choose whether closing the window hides to the tray, and reset the system proxy mode to none.
 
 From the command line:
 
@@ -134,6 +135,7 @@ onionfruitux connect
 onionfruitux status
 onionfruitux new-circuit
 onionfruitux disconnect
+onionfruitux recover       # reattach a leftover Tor session, or clean it up
 onionfruitux panic-off     # stop Tor and delete a leftover firewall table from an older version
 onionfruitux reset-network # set the system proxy mode to none
 onionfruitux doctor
@@ -144,7 +146,7 @@ onionfruitux plan          # print the torrc and proxy settings, change nothing
 
 ## If the app froze or the network stopped working
 
-Current OnionFruitux only changes the system proxy, and it writes the previous values to `~/.local/state/onionfruitux/saved-state.json` first. Closing the app, or opening it again and choosing **Restore**, puts those values back. `onionfruitux reset-network` sets the proxy mode to none when the saved values are not enough. That command does not change DNS or VPN connections.
+Current OnionFruitux only changes the system proxy, and it writes the previous values to `~/.local/state/onionfruitux/saved-state.json` first. Opening the app again runs a sanity check: a leftover healthy Tor is reattached, otherwise leftovers are cleaned up. `onionfruitux recover` does the same from the command line. `onionfruitux reset-network` sets the proxy mode to none when the saved values are not enough. That command does not change DNS or VPN connections.
 
 Older versions also installed one nftables table, `inet onionfruitux`, redirected DNS, and on disconnect asked NetworkManager to reapply every connection. That could leave the computer with no internet, including while a ProtonVPN kill switch was up. Those versions did not change ProtonVPN on purpose, but reapplying the network and blocking UDP could drop it. This version does not install that table, does not rewrite `resolv.conf`, and does not touch ProtonVPN or Tailscale.
 

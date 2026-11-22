@@ -49,6 +49,7 @@ class ConnectOrderTests(unittest.TestCase):
              patches[6], patches[7], \
              patch.object(system, "_wait_for_listeners", return_value=True), \
              patch.object(system, "_wait_bootstrap", side_effect=bootstrap), \
+             patch.object(system, "our_port_conflicts", return_value=[]), \
              patch.object(system.subprocess, "run", side_effect=forbidden), \
              patch.object(system, "_write_state") as state:
             messages = []

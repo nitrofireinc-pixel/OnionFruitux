@@ -125,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop OnionFruitux's Tor and delete a leftover firewall table",
     )
     sub.add_parser(
+        "recover",
+        help="reattach a leftover Tor session or clean it up",
+    )
+    sub.add_parser(
         "reset-network",
         help="set the system proxy mode to none",
     )
@@ -200,6 +204,17 @@ def connect_command(
     heartbeat_file: str | None = None,
 ) -> None:
     cfg = _config_for(system=system, config=config)
+    if _needs_admin(privileged, system):
+        from onionfruitux.recover import recover_session
+
+        recovered = recover_session(error_file=error_file)
+        if recovered.attached:
+            reporter = _publish_progress(progress_file, progress)
+            if recovered.note:
+                reporter(recovered.note)
+            if _wants_check_page(cfg, open_page):
+                open_check_page()
+            return
     errors = validate_for_connect(cfg)
     if errors:
         raise OnionError("\n".join(errors))
@@ -296,6 +311,26 @@ def reset_network_command() -> None:
     reset_proxy_defaults()
 
 
+_session_closed = False
+
+
+def session_was_shutdown() -> bool:
+    return _session_closed
+
+
+def shutdown_session(*, error_file: str | None = None) -> None:
+    """Turn the switch off and restore the proxy. Safe to call more than once."""
+    global _session_closed
+    if _session_closed:
+        return
+    _session_closed = True
+    try:
+        disconnect_command(open_page=False, error_file=error_file)
+    except Exception:
+        _session_closed = True
+        raise
+
+
 def panic_off_command(
     *,
     privileged: bool = False,
@@ -354,11 +389,11 @@ def status_command() -> str:
     else:
         route = cfg.current_route()
     if not state["running"]:
-        lines = ["OnionFruitux is off"]
+        lines = ["OnionFruiTux is off"]
         if cfg.active_route:
             lines.append(f"Route: {cfg.active_route}")
         return "\n".join(lines) + "\n"
-    lines = ["OnionFruitux is on", f"Route: {route.name or '(none)'}"]
+    lines = ["OnionFruiTux is on", f"Route: {route.name or '(none)'}"]
     if route.entry and not route.bridge:
         lines.append(f"Entry: {route.entry}")
     if route.exit:
@@ -407,6 +442,17 @@ def _dispatch(args: argparse.Namespace) -> None:
             config=args.config,
             error_file=args.error_file,
         )
+        return
+    if args.command == "recover":
+        from onionfruitux.recover import recover_command
+
+        result = recover_command(
+            privileged=args.privileged,
+            system=args.system,
+            error_file=args.error_file,
+        )
+        if result.note:
+            print(result.note)
         return
     if args.command == "panic-off":
         panic_off_command(
